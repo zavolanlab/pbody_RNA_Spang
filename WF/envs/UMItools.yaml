@@ -1,0 +1,9 @@
+---
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - bioconda::umi_tools
+  - bioconda::seqkit=2.8.2
+  - bioconda::samtools
+...

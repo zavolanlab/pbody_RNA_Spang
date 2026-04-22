@@ -1,0 +1,1243 @@
+import os
+import pandas as pd
+import shutil
+import yaml
+from shlex import quote
+from typing import Tuple
+from snakemake.utils import validate
+
+localrules:  finish
+
+# Get sample table
+samples = pd.read_csv(
+    config["samples_file"],
+    header=0,
+    index_col=None,
+    comment='#',
+    engine='python',
+    sep="\t")
+samples = samples.drop_duplicates('sample').reset_index(drop=True)
+samples.index = samples['sample']
+
+# for splitting fastq files, for faster, parallelized processing in UMItools
+# we can set any number from 2 to 999 here
+def get_number_of_parts():
+    return '3'
+
+# we can separate fastq in up to 999 parts, not more
+def get_elem_str(elem):
+    if elem<10 and elem>0:
+        return 'part_00'+str(elem)
+    elif elem>=10 and elem<100:
+        return 'part_0'+str(elem)
+    elif elem>=100 and elem<1000:
+        return 'part_'+str(elem)
+    else:
+        return ''
+
+def get_list_of_part_suffices():
+    n = int(get_number_of_parts())
+    l = list(range(n))
+    return [get_elem_str(elem+1) for elem in l]
+
+rule finish:
+    input:
+        ###
+        # quality checks on fastq files
+        ###
+        fastqc_input=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),
+        fastqc_extracted_UMIs=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.extracted_UMIs.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),
+        fastqc_NoAdapters=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.no_adapters.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),
+        ###
+        # collect statistics on nucleotide composition at the beginning of reads
+        ###
+        prefix_kmer_read_stats=expand(os.path.join(
+            config["output_dir"],
+            "read_stats",
+            "{sample}.read_stats.txt",
+        ),
+        sample = list(samples.index.values)),
+        bai=expand(os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam.bai",
+        ),
+        sample = list(samples.index.values)),
+        merged_bam=expand(os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam"),
+        merged_sample=list(samples['merged_sample'].unique())),
+        merged_bam_UMIdedup = expand(os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.bam"),
+        merged_sample=list(samples['merged_sample'].unique())),
+        ###
+        # mapping statistics
+        ###
+        mapping_stats=expand(os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{merged_sample}.mapping_stats.txt"),
+        merged_sample=list(samples['merged_sample'].unique())),
+        ###
+        # Quantifying gene expression
+        ###
+        genomic_counts_MergedSampleLevel = expand(os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_DefaultGTF",
+            "{merged_sample}.txt"),
+        merged_sample = list(samples['merged_sample'].unique())),
+        # # gene_type_counts = expand(os.path.join(
+        # #     config['output_dir'], 
+        # #     "gene_expression_quantification", 
+        # #     "FeatureCounts_gene_types",
+        # #     "{sample}.gene_types.txt"),
+        # # sample = list(samples.index.values)),
+        # mirBase_counts = expand(os.path.join(
+        #     config['output_dir'], 
+        #     "gene_expression_quantification", 
+        #     "FeatureCounts_mirBase_genomic_STAR",
+        #     "{sample}.mirBase_genomic_STAR.txt"),
+        # sample = list(samples.index.values)),
+        # rnaseqmut_txt=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "rnaseqmut",
+        #                 "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.txt"),
+        # sample = list(samples.index.values)),
+        # coverage_tsv_gz = expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
+        #  sample = list(samples.index.values)),
+
+rule index_genome:
+    """
+        use samtools to index genome
+    """
+    input:
+        genome = config["genome_file"],
+    output:
+        genome_fai = config["genome_file"]+'.fai'
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=80000,
+        runtime=240,
+    log:
+        os.path.join(config["local_log"],"index_genome.log"),
+    shell:
+        """(set +o pipefail; \
+        samtools faidx -@ {threads} {input.genome}) \
+        &> {log}"""
+
+rule fastqc_input:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        reads_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R1",
+            "{sample}")),
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R2",
+            "{sample}")),
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=29,
+        qos='30min'
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_input__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {output.outdir_R2}; \
+        if [[ "{input.reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} \
+        --threads {threads} \
+        {input.reads_R1}; fi; \
+        if [[ "{input.reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R2} \
+        --threads {threads} \
+        {input.reads_R2}; fi) \
+        &> {log}"""
+
+
+rule split_fastq_into_files:
+    """
+        next rule uses UMItools, but UMI tools can't be parallelized
+        therefore we'll separate each fastq file into chunks and process them in parallel
+    """
+    input:
+        reads_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        reads_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+    output:
+        success_flag = os.path.join(
+            config['output_dir'], 
+            "success_flags",
+            "{sample}.splitting_InputFastq_into_parts.success"),
+    params:
+        dir_with_SuccessFlags = os.path.join(
+            config["output_dir"],
+            "success_flags"),
+        sample = "{sample}",
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_split",
+            "{sample}"),
+        dir_FastqSymbLincs = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_SymbLincs"),
+        number_of_parts = get_number_of_parts(),
+        # symbolic links are needed only to have systematic namings after splitting
+        reads_R1_SymbLinc=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_SymbLincs",            
+            "{sample}.R1.fastq.gz"),
+        reads_R2_SymbLinc=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_SymbLincs",            
+            "{sample}.R2.fastq.gz"),
+    conda:
+        "envs/UMItools.yaml"
+    threads: 1
+    resources:
+        mem_mb=30000,
+        runtime=100,
+    log:
+        os.path.join(config["local_log"],"split_fastq_into_files__{sample}.log")
+
+    shell:
+        """(set +o pipefail; mkdir -p {params.dir_with_SuccessFlags}; mkdir -p {params.outdir}; mkdir -p {params.dir_FastqSymbLincs}; \
+        rm -f {output.success_flag}; \
+        rm -f {params.outdir}/{params.sample}*; \
+        rm -f {params.reads_R1_SymbLinc} && ln -f -s {input.reads_R1} {params.reads_R1_SymbLinc}; \
+        rm -f {params.reads_R2_SymbLinc} && ln -f -s {input.reads_R2} {params.reads_R2_SymbLinc}; \
+        seqkit split2 -1 {params.reads_R1_SymbLinc} -2 {params.reads_R2_SymbLinc} -p {params.number_of_parts} -O {params.outdir} -f && \
+        echo 'success' > {output.success_flag}; \
+        ) &> {log}"""
+                
+rule extract_umi:
+    """
+        Extract UMIs from the beginning of R2.
+        Write UMI as a comment in the headers of the output fastq file (remove existing comments before that)
+    """
+    input:
+        success_flag = os.path.join(
+            config['output_dir'], 
+            "success_flags", 
+            "{sample}.splitting_InputFastq_into_parts.success"),
+    output:
+        reads_with_extracted_UMIs_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R1.{part}.fastq.gz"),
+        reads_with_extracted_UMIs_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.{part}.fastq.gz"),
+    params:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_split",
+            "{sample}",
+            "{sample}.R1.{part}.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "input_split",
+            "{sample}",
+            "{sample}.R2.{part}.fastq.gz"),
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs"),
+        reads_R2_tmp=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",            
+            "{sample}.R2.{part}.tmp.fastq.gz"),
+        
+        bc_pattern_R1 = '',
+        bc_pattern_R2 = lambda wildcards: samples.loc[wildcards.sample, "fq2_UMI_len"],
+        new_read_names = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.{part}.new_read_names.txt"),
+        old_read_names = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.{part}.old_read_names.txt"),
+        read_name_alias = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.{part}.read_name_alias.txt"),
+        log_R1 = os.path.join(config["local_log"],"extract_umi__{sample}_{part}.R1.log"),
+        log_R2 = os.path.join(config["local_log"],"extract_umi__{sample}_{part}.R2.log"),
+    conda:
+        "envs/UMItools.yaml"
+    threads: 1
+    resources:
+        mem_mb=50000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"extract_umi__{sample}_{part}.log")
+
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        ln -f -s {params.reads_R2} {params.reads_R2_tmp} && \
+        umi_tools extract \
+        --stdin={params.reads_R2_tmp} \
+        --bc-pattern={params.bc_pattern_R2} \
+        --log={params.log_R2} | seqkit replace -p ' .+' -r '$1' -o {output.reads_with_extracted_UMIs_R2}; \
+        zcat {output.reads_with_extracted_UMIs_R2} | seqkit seq -n > {params.new_read_names} && \
+        cat {params.new_read_names} | awk -F'_' '{{print $1}}' > {params.old_read_names} && \
+        paste -d '\t' {params.old_read_names} {params.new_read_names} > {params.read_name_alias} && \
+        zcat {params.reads_R1} | seqkit replace -p ' .+' -r '$1' | \
+        seqkit replace -p '(.+)$' -r '{{kv}}' -k {params.read_name_alias} -o {output.reads_with_extracted_UMIs_R1} && \
+        rm {params.new_read_names} {params.old_read_names} {params.read_name_alias} {params.reads_R2_tmp}; \
+        ) &> {log}"""
+
+rule combine_fastq_files_with_extracted_UMIs:
+    """
+        Extract UMIs from the beginning of R2. Before that, trim the first nt, as it's often N.
+        Write UMI as a comment in the headers of the output fastq file (remove existing comments before that)
+    """
+    input:
+        reads_R1=expand(os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{{sample}}.R1.{part}.fastq.gz"),
+            part = get_list_of_part_suffices()),
+        reads_R2=expand(os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{{sample}}.R2.{part}.fastq.gz"),
+            part = get_list_of_part_suffices()),
+    output:
+        reads_with_extracted_UMIs_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R1.fastq.gz"),
+        reads_with_extracted_UMIs_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.fastq.gz"),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs"),
+    conda:
+        "envs/UMItools.yaml"
+    threads: 1
+    resources:
+        mem_mb=50000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"combine_fastq_files_with_extracted_UMIs__{sample}.log")
+
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        cat {input.reads_R1} > {output.reads_with_extracted_UMIs_R1} && \
+        cat {input.reads_R2} > {output.reads_with_extracted_UMIs_R2}; \
+        ) &> {log}"""
+
+rule fastqc_extracted_UMIs:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R1.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.fastq.gz"),
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.extracted_UMIs.R1",
+            "{sample}")),
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.extracted_UMIs.R2",
+            "{sample}")),
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=29,
+        qos='30min'
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_extracted_UMIs__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {output.outdir_R2}; \
+        if [[ "{input.reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} \
+        --threads {threads} \
+        {input.reads_R1}; fi; \
+        if [[ "{input.reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R2} \
+        --threads {threads} \
+        {input.reads_R2}; fi) \
+        &> {log}"""
+
+rule remove_adapters:
+    """
+        Remove remaining poly(A) stretches from 3' end of R1 reads and poly(T) from 5'end of R2 reads if present
+    """
+    input:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R1.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.fastq.gz"),
+    output:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R1.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R2.fastq.gz"),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters"),
+        R2_trim5 = lambda wildcards: samples.loc[wildcards.sample, "fq2_trim5"],
+        R1_trim5 = lambda wildcards: samples.loc[wildcards.sample, "fq1_trim5"],
+        R2_3p = lambda wildcards: samples.loc[wildcards.sample, "fq2_3p"],
+        R1_3p = lambda wildcards: samples.loc[wildcards.sample, "fq1_3p"],
+
+    conda:
+        "envs/cutadapt.yaml"
+    threads: 10
+    resources:
+        mem_mb=50000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"remove_adapters__{sample}.log")
+    shell:
+        """(mkdir -p {params.outdir}; \
+        cutadapt -m 1 -j {threads} -u {params.R1_trim5} -U {params.R2_trim5} -a {params.R1_3p} -A {params.R2_3p} \
+        -o {output.reads_R1} -p {output.reads_R2} {input.reads_R1} {input.reads_R2}; \
+        ) &> {log}"""
+
+rule fastqc_remove_adapters:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R1.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R2.fastq.gz"),
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.no_adapters.R1",
+            "{sample}")),
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.no_adapters.R2",
+            "{sample}")),
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=29,
+        qos='30min'
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_remove_adapters__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {output.outdir_R2}; \
+        if [[ "{input.reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} \
+        --threads {threads} \
+        {input.reads_R1}; fi; \
+        if [[ "{input.reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R2} \
+        --threads {threads} \
+        {input.reads_R2}; fi) \
+        &> {log}"""
+
+###
+# checking the expected properties of reads in Takara kit, based on template switching
+###
+
+rule count_prefix_kmers_in_reads:
+    """
+        We check that prefixes of input R1 reads are enriched with GGG, expected for Takara kit
+        input R2 reads should have UMIs in the prefix
+    """
+    input:
+        input_reads_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        input_reads_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+        reads_with_extracted_UMIs_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R1.fastq.gz"),
+        reads_with_extracted_UMIs_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "extracted_UMIs",
+            "{sample}.R2.fastq.gz"),
+        remove_adapters_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R1.fastq.gz"),
+        remove_adapters_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R2.fastq.gz"),
+    output:
+        read_stats=os.path.join(
+            config["output_dir"],
+            "read_stats",
+            "{sample}.read_stats.txt",
+        )
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "read_stats"),
+        prefix_length = 8,
+    conda:
+        "envs/seqkit_282.yaml"
+    threads: 4
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"count_prefix_kmers_in_reads_{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        echo '>input reads R1' > {output.read_stats}; \
+        zcat {input.input_reads_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        echo '>reads_with_extracted_UMIs R1' >> {output.read_stats}; \
+        zcat {input.reads_with_extracted_UMIs_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        echo '>adapter_trimmed R1' >> {output.read_stats}; \
+        zcat {input.remove_adapters_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        echo '>input reads R2' >> {output.read_stats}; \
+        zcat {input.input_reads_R2} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        echo '>reads_with_extracted_UMIs R2' >> {output.read_stats}; \
+        zcat {input.reads_with_extracted_UMIs_R2} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        echo '>adapter_trimmed R2' >> {output.read_stats}; \
+        zcat {input.remove_adapters_R2} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+        ) &> {log}"""
+
+############
+## map to genome
+############
+
+rule create_index_star:
+    """
+        Create index for STAR alignments
+    """
+    input:
+        genome=config["genome_file"],
+        gtf = config["gtf_file"],
+    output:
+        chromosome_info=os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF",
+            "STAR_index",
+            "chrNameLength.txt",
+        ),
+        chromosomes_names=os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF",
+            "STAR_index",
+            "chrName.txt",
+        ),
+    params:
+        output_dir=lambda wildcards, output: os.path.dirname(output.chromosome_info),
+        outFileNamePrefix=os.path.join(
+            config["output_dir"],"STAR_indices", config["organism"], "with_GTF", "STAR_index/STAR_"
+        ),
+        sjdbOverhang = 151
+    conda:
+        "envs/STAR.yaml"
+    threads: 16
+    resources:
+        mem_mb=80000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"create_index_star.log"),
+    shell:
+        """(mkdir -p {params.output_dir}; \
+        STAR \
+        --runMode genomeGenerate \
+        --genomeDir {params.output_dir} \
+        --genomeFastaFiles {input.genome} \
+        --runThreadN {threads} \
+        --outFileNamePrefix {params.outFileNamePrefix} \
+        --sjdbGTFfile {input.gtf}) \
+        &> {log}"""
+
+rule map_genome_star:
+    """
+        Map to genome using STAR - PE mode allowed
+    """
+    input:
+        chromosome_info = os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF",
+            "STAR_index",
+            "chrNameLength.txt",
+        ),
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R1.fastq.gz"),
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "no_adapters",
+            "{sample}.R2.fastq.gz"),
+    output:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+        log_final_file=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Log.final.out",
+        ),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "map_genome"),
+        STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+        outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+            "Aligned.sortedByCoord.out.bam", ""
+        ),     
+    conda:
+        "envs/STAR.yaml"
+    threads: 12
+    resources:
+        mem_mb=70000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"map_genome_star__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        STAR \
+        --runMode alignReads \
+        --alignEndsType Local \
+        --runThreadN {threads} \
+        --genomeDir {params.STAR_index_dir} \
+        --readFilesIn {input.reads_R1} {input.reads_R2} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix {params.outFileNamePrefix} \
+        --genomeLoad NoSharedMemory \
+        --outSAMtype BAM SortedByCoordinate \
+        --outFilterType BySJout \
+        --outFilterMismatchNoverLmax 0.3 \
+        --outFilterMatchNmin 15 \
+        --outFilterScoreMinOverLread 0  \
+        --outFilterMatchNminOverLread 0 \
+        --alignEndsProtrude 150 ConcordantPair \
+        --twopassMode None \
+        --outBAMsortingThreadN {threads} \
+        --alignTranscriptsPerReadNmax 50000 \
+        --winAnchorMultimapNmax 50000 \
+        --outFilterMultimapNmax 50000 \
+        --outSAMprimaryFlag AllBestScore \
+        --outSAMattributes NH HI AS nM MD \
+        --limitOutSJcollapsed 5000000 \
+        --limitBAMsortRAM 15000000000; \
+        ) &> {log}"""
+
+rule samtools_index_mapped:
+    """
+        index bam files
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+    output:
+        bai=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam.bai",
+        ),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"samtools_index_mapped_{sample}.log")
+    shell:
+        """(samtools index -@ {threads} \
+        {input.bam}; ) &> {log}"""
+
+### remove secondary alignments
+
+rule samtools_remove_secondary:
+    """
+        index bam files
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+    output:
+        filtered_bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"samtools_remove_secondary_{sample}.log")
+    shell:
+        """(samtools view -h -u -F 0x100 {input.bam} | samtools sort -@ {threads} -o {output.filtered_bam} && \
+        samtools index -@ {threads} {output.filtered_bam}; ) &> {log}"""
+
+### merge technical replicates
+
+rule merge_technical_replicates:
+    """
+        merge technical replicates
+    """
+    input:
+        bam=lambda wildcards: expand(os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+        sample = list(samples.loc[samples['merged_sample']==wildcards.merged_sample]['sample'])),
+    output:
+        merged_bam=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam"),
+    params:
+        merged_nonsorted_bam = os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.nonsorted.bam"),
+        merged_sample = "{merged_sample}",
+        outdir = os.path.join(
+           config["output_dir"],
+                        "map_genome_merged"),
+        merged_bai=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam.bai"),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 8
+    log:
+        os.path.join(config["local_log"],"merge_technical_replicates_{merged_sample}.log"),
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        k=0; for i in {input.bam}; do k=$(( $k+1 )); done; \
+        if [[ $k > 1 ]]; then \
+        samtools merge {params.merged_nonsorted_bam} {input.bam} -f -@ {threads}; \
+        samtools sort -@ {threads} {params.merged_nonsorted_bam} > {output.merged_bam}; \
+        samtools index -@ {threads} {output.merged_bam}; \
+        rm {params.merged_nonsorted_bam}; \
+        else \
+        rm -f {output.merged_bam} && ln -f -s {input.bam} {output.merged_bam}; \
+        rm -f {params.merged_bai} && ln -f -s {input.bam}.bai {params.merged_bai}; \
+        fi; \
+        ) &> {log}"""
+
+rule dedup_based_on_UMIs:
+    """
+        Collapse PCR duplicates if the samples had UMIs
+    """
+    input:
+        bam=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam"),
+    output:
+        sorted_bam = os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.bam"),
+        bai = os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.bam.bai"),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup"),
+        non_sorted_bam = os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.non_sorted.bam"),
+    conda:
+        "envs/UMItools.yaml"
+    threads: 4
+    resources:
+        mem_mb=150000,
+        runtime=1400,
+    log:
+        os.path.join(config["local_log"],"dedup_based_on_UMIs_{merged_sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        umi_tools dedup \
+        --paired \
+        --method unique \
+        --unmapped-reads use \
+        -I {input.bam} \
+        -S {params.non_sorted_bam} && \
+        samtools sort -@ {threads} {params.non_sorted_bam} > {output.sorted_bam} && \
+        samtools index -@ {threads} {output.sorted_bam} && \
+        rm -f {params.non_sorted_bam}; \
+        ) &> {log}"""
+
+
+rule redefine_NH_tags_and_quality_values:
+    """
+        redefine NH tags and, accordingly, quality values of the filtered reads
+        because after filtering, some reads may become unique, or number of MMs decreases
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.bam"),
+        script=os.path.join(workflow.basedir, "scripts", "redefine_qual_and_NHtag.py"),
+    output:
+        sorted_bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+           "{merged_sample}.sorted.redefined_NH.bam",
+        ),
+        bai=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+           "{merged_sample}.sorted.redefined_NH.bam.bai",
+        )
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup"),
+        non_sorted_bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+           "{merged_sample}.redefined_NH.bam",
+        )
+    conda:
+        "envs/seqio.yaml"
+    threads: 8
+    resources:
+        mem_mb=80000,
+        runtime=350,
+    log:
+        os.path.join(config["local_log"],"redefine_NH_tags_and_quality_values_{merged_sample}.log"),
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        python3 {input.script} \
+        --input_bam_file {input.bam} \
+        --out_bam_file {params.non_sorted_bam}; \
+        samtools sort -@ {threads} {params.non_sorted_bam} > {output.sorted_bam} && \
+        samtools index -@ {threads} {output.sorted_bam} && \
+        rm -f {params.non_sorted_bam}; \
+        ) \
+        &> {log}"""
+
+###
+# checking the properties of alignments on different stages
+###
+
+rule count_UM_MM_reads_from_different_mapping_steps:
+    """
+        Count the abundance of UM/MM reads on different steps of mapping
+        write to the ouput text file, line after line
+    """
+    input:
+        bam_genome=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam"),
+        bam_genome_UMIdedup=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.redefined_NH.bam"),
+    output:
+        mapping_stats=os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{merged_sample}.mapping_stats.txt"),
+        success_flag=os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{merged_sample}.success"),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "mapping_stats"),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"count_UM_MM_reads_from_different_mapping_steps_{merged_sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        rm -f {output.success_flag}; \
+        echo '>number of UM reads; genomic mapping' > {output.mapping_stats}; \
+        samtools view -@ {threads} -q 255 {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo '>total number of mapped reads; genomic mapping' >> {output.mapping_stats}; \
+        samtools view -@ {threads} {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo '>number of UM reads; UMI dedup' >> {output.mapping_stats}; \
+        samtools view -@ {threads} -q 255 {input.bam_genome_UMIdedup} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo '>total number of mapped reads; UMI dedup' >> {output.mapping_stats}; \
+        samtools view -@ {threads} {input.bam_genome_UMIdedup} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo 'success' > {output.success_flag}; \
+        ) &> {log}"""
+
+###
+# Quantifying gene expression
+###
+
+rule FeatureCounts_genomic_DefaultGTF:
+    """
+        quantify how many reads support each gene, using only UM reads
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.redefined_NH.bam"),
+        gtf = config['gtf_file'],
+    output:
+        out_gene_fragments_txt = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_DefaultGTF",
+            "{merged_sample}.txt"),
+    params:
+        outdir = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_DefaultGTF"),
+    conda:
+        "envs/FeatureCounts.yaml"
+    threads:8
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"FeatureCounts_genomic_DefaultGTF_{merged_sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        featureCounts -p --countReadPairs -O --fraction -s 2 -T {threads} -B -C -P -d 1 -D 10000000000000 \
+        -t exon -g gene_id \
+        -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+
+# rule FeatureCounts_gene_types:
+#     """
+#         quantify how many reads support each gene type in a sample
+
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.bam",
+#         ),
+#         gtf = config['gene_type_segments_gtf'],
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_gene_types",
+#             "{sample}.gene_types.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_gene_types"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_gene_types_{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -M -O --fraction -s 1 -T {threads} -t exon -g gene_id \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+#         # for PE mode: 
+#         # """(set +o pipefail; mkdir -p {params.outdir}; \
+#         # featureCounts -p --countReadPairs -M -O --fraction -s 1 -B -C -P -d 0 -D 10000000000000 -T {threads} -t exon -g gene_id \
+#         # -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+
+
+# #############
+# # profile mutations
+# #############
+
+# rule get_uniquely_mapped_reads:
+#     """
+#         Get uniquely mapped reads
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.bam"),
+#     output:
+#         bam_filtered=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"get_uniquely_mapped_reads_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         samtools view -@ {threads} -h -q 255 -u {input.bam} | \
+#         samtools sort -@ {threads} -o {output.bam_filtered}; \
+#         samtools index -@ {threads} {output.bam_filtered}) \
+#         &> {log}"""
+
+# # make coverage - needed to quantify the abundance of mutations in RNA sequencing
+
+# rule make_genomic_coverage:
+#     """
+#         coverage WITH specified nucleotides, in order to groupby them - across whole genome or across genes
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{merged_sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam",
+#         ),
+#         genome = config["genome_file"],
+#         mirBase_exons_bed = config['mirBase_exons_bed'],
+#     output:
+#         coverage_tsv_gz = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
+#         genome_wide_ref_nt_abundance_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.genome_wide_ref_nt_abundance.tsv"),
+#         gene_level_ref_nt_abundance_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.gene_level_ref_nt_abundance.tsv"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         coverage_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=60000,
+#         runtime=500,
+#     log:
+#         os.path.join(config["local_log"],"make_genomic_coverage_{merged_sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         samtools view -@ {threads} -F 0x10 -u {input.bam} | \
+#         samtools depth -s - | \
+#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "+"}}' | \
+#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
+#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' > {params.coverage_tsv} && \
+#         samtools view -@ {threads} -f 0x10 -u {input.bam} | \
+#         samtools depth -s - | \
+#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "-"}}' | \
+#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
+#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' >> {params.coverage_tsv} && \
+#         pigz -p {threads} -f -c {params.coverage_tsv} > {output.coverage_tsv_gz}; \
+#         zcat {output.coverage_tsv_gz} | cut -f4,5 | \
+#         awk -F'\t' '{{ sums[$1] += $2 }} END {{ for (group in sums) {{ print group "\t" sums[group] }} }}' | \
+#         sort -k1,1 > {output.genome_wide_ref_nt_abundance_tsv}; \
+#         zcat {output.coverage_tsv_gz} | awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" $4 "\t" $5 "\t" $3}}' | \
+#         sort -k1,1 -k2,2n | bedtools intersect -s -wb -sorted -a - -b {input.mirBase_exons_bed} | \
+#         awk '{{print $10 "\t" $4 "\t" $5}}' | \
+#         awk -F'\t' '{{ key = $1 FS $2; sums[key] += $3 }} END {{ for (k in sums) {{  print k "\t" sums[k] }} }}' | \
+#         sort -k1,1 -k2,2 > {output.gene_level_ref_nt_abundance_tsv}; \
+#         rm -f {params.coverage_tsv}; \
+#         ) \
+#         &> {log}"""
+
+# rule rnaseqmut:
+#     """
+#         Profing mutations in RNA-seq-like data
+#     """
+#     input:
+#         reads = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome",
+#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam"),
+#         reference_genome = config["genome_file"],
+#     output:
+#         out_txt=os.path.join(
+#                         config["output_dir"],
+#                         "rnaseqmut",
+#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.txt"),
+#     params:
+#         outdir=directory(os.path.join(
+#             config["output_dir"],
+#             "rnaseqmut")),
+#     threads: 4
+#     resources:
+#         mem_mb=10000,
+#         runtime=359,
+#         qos='6hours'
+#     singularity:
+#         "docker://davidliwei/rnaseqmut"
+#     log:
+#         os.path.join(config["local_log"],"rnaseqmut__{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         rnaseqmut --use_mdtag --max_mismatch 100 --mut_span 1 {input.reads} > {output.out_txt}) \
+#         &> {log}"""
+
+# rule FeatureCounts_mirBase_genomic_STAR:
+#     """
+#         quantify how many reads support each microRNA in a sample
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome",
+#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam"),
+#         gtf = config['mirBase_gtf'],
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_mirBase_genomic_STAR",
+#             "{sample}.mirBase_genomic_STAR.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_mirBase_genomic_STAR"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_mirBase_genomic_STAR_{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -O --fraction -s 1 -T {threads} -t miRNA -g ID \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+#         # for PE mode
+#         # """(set +o pipefail; mkdir -p {params.outdir}; \
+#         # featureCounts -p --countReadPairs -O --fraction -s 1 -B -C -P -d 0 -D 10000000000000 -T {threads} -t miRNA -g ID \
+#         # -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""

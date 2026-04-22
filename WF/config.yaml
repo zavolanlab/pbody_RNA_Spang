@@ -1,0 +1,8 @@
+---
+  # Input
+  samples_file: "/scicore/home/zavolan/GROUP/RNA_oxidation/output/start_samples.tsv"
+
+  # Output
+  output_dir: "/scicore/home/zavolan/GROUP/RNA_oxidation/output/"
+  local_log: "/scicore/home/zavolan/GROUP/RNA_oxidation/output/local_log/"
+  cluster_log: "/scicore/home/zavolan/GROUP/RNA_oxidation/temp_dir/slurm/"

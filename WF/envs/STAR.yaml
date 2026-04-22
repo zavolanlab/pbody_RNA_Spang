@@ -1,0 +1,7 @@
+---
+channels:
+  - bioconda
+dependencies:
+  - STAR=2.7.11b
+  - bioconda::samtools
+...

@@ -1,0 +1,8 @@
+---
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bioconda::seqkit=2.8.2
+  - conda-forge::pigz
+...
