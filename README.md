@@ -1,40 +1,38 @@
-# The landscape of polyA tail length changes linked to PAIP1 regulation, based on nanopore cDNA sequencing (In collaboration with Maria Hondele lab) - Analysis and Pipelines
+# Analysis of P-body associated RNA in yeast (In collaboration with Anne Spang lab) - Analysis and Pipelines
 
-This repository contains the computational workflows and downstream analysis notebooks related to the polyA tail length changes linked to PAIP1 perturbations, conducted by the lab of Prof. Maria Hondele.
+This repository contains the computational workflows and downstream analysis notebooks related to the analysis of P-body associated RNA, based on RNA-seq and cCLAP experiments conduct in Saccharomyces cerevisiae.
 
 The repository is optimized for running BOTH the workflows and analysis in jupyter notebook on HPC cluster.
 
 On sciCORE HPC, running jupyter notebook on a computational node is nicely enabled by [OnDemand service](https://docs.scicore.unibas.ch/HPC%20Cluster/interactivecomputing/#open-ondemand-ood).
 
-We utilize a hybrid approach: [Nextflow](https://docs.seqera.io/nextflow/) for robust, scalable data processing on HPC clusters (sciCORE), and **Jupyter Notebooks** for interactive downstream analysis and visualization.
+We utilize a hybrid approach: **Snakemake** for robust, scalable data processing on HPC clusters (sciCORE), and **Jupyter Notebooks** for interactive downstream analysis and visualization.
 
 # Current state
-Currently, we're analyzing the cDNA nanopore ONT sequencing data from human PAIP1 knockdown and overexpression experiments in Hela cell lines and from Drosophila embryogenesis experiments. For processing of nanopore .pod5 files, we use a newly developped [nanoflowz](https://github.com/zavolanlab/nanoflowz) Nextflow-based pipeline.
+Currently, we're analyzing the bulk RNA-seq and cCLAP data from yeast experiments.
 
 ## Repository Structure
 
 ```text
 .
-├── ONT_seq_PAIP1_Hondele.current.ipynb      # a Jupyter notebook dedicated to the project, includes analysis and workflow configuration
-├── ONT_seq_PAIP1_Hondele.template.env       # Template for required environment variables/paths
+├── pbody_RNA_Spang.current.ipynb       # a Jupyter notebook dedicated to the project, includes analysis and workflow configuration
+├── pbody_RNA_Spang.template.env        # Template for required environment variables/paths
+└── WF/                                 # Snakemake Workflow Engine
+    ├── Snakefile-basic                 # Snakemake pipeline for RNA-seq and cCLAP data processing optimized for SMART-Seq Total RNA Library Prep with ZapR Depletion (with UMIs)
+    ├── config.template.yaml            # Template configuration for Snakemake parameters
+    ├── envs/                           # Conda environments isolated for specific Snakemake rules
+    ├── profile/                        # SLURM execution profile for the HPC
+    └── scripts/                        # Python and R scripts utilized by both Snakemake and Jupyter
 ```
 
 ## Data from external databases/resources
 !Attention: clicking on links below will automatically start downloading of big files.
 
-**Human genome and annotation**
+**yeast genome and annotation**
 
-[primary genome assembly hg38 from GENCODE .fasta](https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_49/GRCh38.primary_assembly.genome.fa.gz)
+[genome assembly R64-1-1 from Ensembl release 109 .fasta](https://ftp.ensembl.org/pub/release-109/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz)
 
-[BASIC genome annotation for hg38 v42, .gtf](https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_42/gencode.v42.primary_assembly.basic.annotation.gtf.gz)
-
-[Comprehensive genome annotation for hg38 v42, .gtf](https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_42/gencode.v42.primary_assembly.annotation.gtf.gz)
-
-**Drosophila genome and annotation**
-
-[primary genome BDGP6 from Ensembl release-115, .fasta](https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz)
-
-[genome annotation for BDGP6, .gtf](https://ftp.ensembl.org/pub/release-115/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.54.115.gtf.gz)
+[corresponding genome annotation, .gtf](https://ftp.ensembl.org/pub/release-109/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.109.gtf.gz)
 
 ## Quick Start & Setup
 
@@ -43,8 +41,8 @@ To ensure strict reproducibility and security, this project uses `.env` files to
 ### 1. Clone the Repository
 Clone this repository into your local user space (`$HOME`):
 ```bash
-git clone https://github.com/zavolanlab/ONT_seq_PAIP1_Hondele.git
-cd ONT_seq_PAIP1_Hondele
+git clone https://github.com/zavolanlab/pbody_RNA_Spang.git
+cd pbody_RNA_Spang
 ```
 
 ### 2. Configure Environment Paths
