@@ -1,0 +1,12 @@
+name: rnafracmod
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - conda-forge::numpy
+  - conda-forge::pandas
+  - conda-forge::scipy
+  - conda-forge::seaborn
+  - conda-forge::adjusttext
+  - pip >=20.2.3

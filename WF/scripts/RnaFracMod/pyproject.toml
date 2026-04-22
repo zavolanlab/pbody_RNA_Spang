@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rnafracmod"
+version = "0.1.0"
+description = "Modelling of paired RNA-seq-like experiments (Total vs Fraction)"
+readme = "README.md"
+authors = [
+  { name="Aleksei Mironov", email="magmir71@gmail.com" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "seaborn",
+    "matplotlib",
+    "adjusttext",
+]
+
+[project.scripts]
+rnafracmod = "rnafracmod.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

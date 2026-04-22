@@ -1,0 +1,37 @@
+Metadata-Version: 2.4
+Name: rnafracmod
+Version: 0.1.0
+Summary: Modelling of paired RNA-seq-like experiments (Total vs Fraction)
+Author-email: Aleksei Mironov <magmir71@gmail.com>
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scipy
+Requires-Dist: seaborn
+Requires-Dist: matplotlib
+Dynamic: license-file
+
+# RnaFracMod
+
+[![license][badge-license]][badge-url-license]
+
+RnaFracMod is a command-line tool for modelling count data from bulk RNA-seq-like experiments involving total fraction and a sub-fraction, for example RNAseq-RiboSeq or RNAseq from pull-down or subcellular fraction experiments
+
+## Installation
+
+### Using conda (recommended)
+
+```bash
+conda env create -f install/RnaFracMod.yaml
+conda activate rnafracmod
+```
+This will install RnaFracMod and its dependencies.
+
+## License
+
+GNU General Public License v2.0
+
+[badge-license]: <https://img.shields.io/badge/License-GPL_v2-blue.svg>
+[badge-url-license]: <https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html>
