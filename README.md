@@ -17,6 +17,7 @@ Currently, we're analyzing the bulk RNA-seq and cCLAP data from yeast experiment
 .
 ├── pbody_RNA_Spang.current.ipynb       # a Jupyter notebook dedicated to the project, includes analysis and workflow configuration
 ├── pbody_RNA_Spang.template.env        # Template for required environment variables/paths
+├── upload_to_hf.no_token.py            # python script which used HF API to upload selected data to Hugging Face
 └── WF/                                 # Snakemake Workflow Engine
     ├── Snakefile-basic                 # Snakemake pipeline for RNA-seq and cCLAP data processing optimized for SMART-Seq Total RNA Library Prep with ZapR Depletion (with UMIs)
     ├── config.template.yaml            # Template configuration for Snakemake parameters
@@ -49,16 +50,16 @@ cd pbody_RNA_Spang
 You must map the project to your local HPC paths. 
 **First**, copy the template, rename it, and fill in your absolute paths, for example like that:
   ```bash
-  cp ONT_seq_PAIP1_Hondele.template.env ONT_seq_PAIP1_Hondele.scicore.env
+  cp pbody_RNA_Spang.template.env pbody_RNA_Spang.scicore.env
   # Open .env and edit the "Base Directories" section to match your system
   ```
-* **Recommended if you are a Zavolan group member on sciCORE:** move the `ONT_seq_PAIP1_Hondele.scicore.env` to Project GROUP folder and symlink into your local repository directory from step 1 (`ONT_seq_PAIP1_Hondele`):
+* **Recommended if you are a Zavolan group member on sciCORE:** move the `pbody_RNA_Spang.scicore.env` to Project GROUP folder and symlink into your local repository directory from step 1 (`pbody_RNA_Spang`):
   ```bash
-  ln -s <a file with specified sciCORE paths> ONT_seq_PAIP1_Hondele.scicore.env
+  ln -s <a file with specified sciCORE paths> pbody_RNA_Spang.scicore.env
   ```
-This way `ONT_seq_PAIP1_Hondele.scicore.env` will be automatically accessible by group members but will not be tracked by git.
-*(Note: `*.env` files are ignored by git to protect private cluster paths, except the `ONT_seq_PAIP1_Hondele.template.env` file).*
-**(`ONT_seq_PAIP1_Hondele.scicore.env` does exist in the GROUP folder of the Project on Scicore. Look for README there.)
+This way `pbody_RNA_Spang.scicore.env` will be automatically accessible by group members but will not be tracked by git.
+*(Note: `*.env` files are ignored by git to protect private cluster paths, except the `pbody_RNA_Spang.template.env` file).*
+**(`pbody_RNA_Spang.scicore.env` does exist in the GROUP folder of the Project on Scicore. Look for README there.)
 
 ### 3. Install the conda environment with zavolab_pyutils
 Analysis in the notebook is largely based on the functions from [zavolab_pyutils](https://github.com/zavolanlab/zavolab_pyutils/tree/dev) repository.
@@ -66,14 +67,14 @@ Follow the instruction from that repo "Developer Setup from source, with conda e
 Use the created conda environment "zavolab_pyutils" to execute the Jupyter Notebook.
 
 ### 4. Essential for developpers! Install nbstripout
-When in the `ONT_seq_PAIP1_Hondele` directory, run:
+When in the `pbody_RNA_Spang` directory, run:
 ```bash
 nbstripout --install
 ```
 This will automatically hide the output of cells in juputer notebooks when pushed to github! Otherwise there is a risk of exposing your HPC cluster paths to public.
 
 ### 5. Use the juputer notebook to configure the workflow and input table preparation
-Configuration of the workflows (i.e. creation of input .tsv with sample specification and .yaml config is done **inside** the [jupyter notebook](ONT_seq_PAIP1_Hondele.current.ipynb))
+Configuration of the workflows (i.e. creation of input .tsv with sample specification and .yaml config is done **inside** the [jupyter notebook](pbody_RNA_Spang.current.ipynb))
 
 ### 6. Executing the Workflows
 
