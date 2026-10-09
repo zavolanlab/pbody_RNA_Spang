@@ -6,7 +6,7 @@ from shlex import quote
 from typing import Tuple
 from snakemake.utils import validate
 
-localrules:  finish
+localrules:  finish, make_chrom_sizes
 
 # Get sample table
 samples = pd.read_csv(
@@ -105,28 +105,14 @@ rule finish:
             "FeatureCounts_genomic_DefaultGTF",
             "{merged_sample}.txt"),
         merged_sample = list(samples['merged_sample'].unique())),
-        # # gene_type_counts = expand(os.path.join(
-        # #     config['output_dir'], 
-        # #     "gene_expression_quantification", 
-        # #     "FeatureCounts_gene_types",
-        # #     "{sample}.gene_types.txt"),
-        # # sample = list(samples.index.values)),
-        # mirBase_counts = expand(os.path.join(
-        #     config['output_dir'], 
-        #     "gene_expression_quantification", 
-        #     "FeatureCounts_mirBase_genomic_STAR",
-        #     "{sample}.mirBase_genomic_STAR.txt"),
-        # sample = list(samples.index.values)),
-        # rnaseqmut_txt=expand(os.path.join(
-        #                 config["output_dir"],
-        #                 "rnaseqmut",
-        #                 "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.txt"),
-        # sample = list(samples.index.values)),
-        # coverage_tsv_gz = expand(os.path.join(
-        #                 config["output_dir"],
-        #                 "map_genome_merged",
-        #                 "{sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
-        #  sample = list(samples.index.values)),
+        ###
+        # Producing stranded genomic coverage
+        ###
+        minus_strand_coverage = expand(os.path.join(
+                        config["output_dir"],
+                        "genomic_coverage",
+                        "{merged_sample}.minus.bigwig"),
+        merged_sample = list(samples['merged_sample'].unique())),
 
 rule index_genome:
     """
@@ -148,6 +134,19 @@ rule index_genome:
         """(set +o pipefail; \
         samtools faidx -@ {threads} {input.genome}) \
         &> {log}"""
+
+rule make_chrom_sizes:
+    """
+        derive chrom.sizes (chromosome name and length) from the samtools faidx index
+    """
+    input:
+        genome_fai = config["genome_file"]+'.fai'
+    output:
+        chrom_sizes = config["genome_file"]+'.chrom.sizes'
+    log:
+        os.path.join(config["local_log"],"make_chrom_sizes.log"),
+    shell:
+        """(cut -f1,2 {input.genome_fai} > {output.chrom_sizes}) &> {log}"""
 
 rule fastqc_input:
     """
@@ -892,7 +891,6 @@ rule redefine_NH_tags_and_quality_values:
             config["output_dir"],
             "map_genome_merged_UMIdedup",
             "{merged_sample}.sorted.bam"),
-        script=os.path.join(workflow.basedir, "scripts", "redefine_qual_and_NHtag.py"),
     output:
         sorted_bam=os.path.join(
             config["output_dir"],
@@ -914,7 +912,7 @@ rule redefine_NH_tags_and_quality_values:
            "{merged_sample}.redefined_NH.bam",
         )
     conda:
-        "envs/seqio.yaml"
+        "envs/zavolab_pyutils.yaml"
     threads: 8
     resources:
         mem_mb=80000,
@@ -923,10 +921,10 @@ rule redefine_NH_tags_and_quality_values:
         os.path.join(config["local_log"],"redefine_NH_tags_and_quality_values_{merged_sample}.log"),
     shell:
         """(set +o pipefail; mkdir -p {params.outdir}; \
-        python3 {input.script} \
+        redefine_qual_and_NHtag \
         --input_bam_file {input.bam} \
         --out_bam_file {params.non_sorted_bam}; \
-        samtools sort -@ {threads} {params.non_sorted_bam} > {output.sorted_bam} && \
+        samtools sort -m 2G -@ {threads} {params.non_sorted_bam} > {output.sorted_bam} && \
         samtools index -@ {threads} {output.sorted_bam} && \
         rm -f {params.non_sorted_bam}; \
         ) \
@@ -1024,220 +1022,80 @@ rule FeatureCounts_genomic_DefaultGTF:
         -t exon -g gene_id \
         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
 
-# rule FeatureCounts_gene_types:
-#     """
-#         quantify how many reads support each gene type in a sample
+rule make_stranded_coverage:
+    """
+        use samtools depth
+        only look at paired reads
+        only look at uniquely mapped reads indicated by MAPQ=255
+        rely on sam flags for strandedness
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged_UMIdedup",
+            "{merged_sample}.sorted.redefined_NH.bam"),
+        chrom_sizes = config["genome_file"]+'.chrom.sizes'
+    output:
+        minus_bw = os.path.join(
+                        config["output_dir"],
+                        "genomic_coverage",
+                        "{merged_sample}.minus.bigwig"),
+        plus_bw = os.path.join(
+                        config["output_dir"],
+                        "genomic_coverage",
+                        "{merged_sample}.plus.bigwig"),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "genomic_coverage"),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 4
+    resources:
+        mem_mb=40000,
+        runtime=240,
+    log:
+        os.path.join(config["local_log"],"make_stranded_coverage_{merged_sample}.log"),
+    shell:
+        """
+        set +o pipefail
+        mkdir -p {params.outdir}
+        
+        # Create an isolated temporary directory for this specific sample's run
+        TMPDIR=$(mktemp -d)
+        trap "rm -rf $TMPDIR" EXIT
+        
+        echo "Processing {wildcards.merged_sample} (Raw depth)..." > {log}
 
-#     """
-#     input:
-#         bam=os.path.join(
-#             config["output_dir"],
-#             "map_genome",
-#             "{sample}.Aligned.sortedByCoord.out.bam",
-#         ),
-#         gtf = config['gene_type_segments_gtf'],
-#     output:
-#         out_gene_fragments_txt = os.path.join(
-#             config['output_dir'], 
-#             "gene_expression_quantification", 
-#             "FeatureCounts_gene_types",
-#             "{sample}.gene_types.txt"),
-#     params:
-#         outdir = os.path.join(
-#             config['output_dir'], 
-#             "gene_expression_quantification", 
-#             "FeatureCounts_gene_types"),
-#     conda:
-#         "envs/FeatureCounts.yaml"
-#     threads:8
-#     resources:
-#         mem_mb=20000,
-#         runtime=60,
-#     log:
-#         os.path.join(config["local_log"],"FeatureCounts_gene_types_{sample}.log")
-#     shell:
-#         """(set +o pipefail; mkdir -p {params.outdir}; \
-#         featureCounts -M -O --fraction -s 1 -T {threads} -t exon -g gene_id \
-#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
-#         # for PE mode: 
-#         # """(set +o pipefail; mkdir -p {params.outdir}; \
-#         # featureCounts -p --countReadPairs -M -O --fraction -s 1 -B -C -P -d 0 -D 10000000000000 -T {threads} -t exon -g gene_id \
-#         # -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+        # 1. Isolate strands (expects F2R1 library orientation that TruSeq results in)
+        # 1.1 gene is on positive strand
+        samtools view -q 255 -b -f 81 {input.bam} > $TMPDIR/r1_rev.bam 2>> {log}
+        samtools view -q 255 -b -f 129 -F 16 {input.bam} > $TMPDIR/r2_fwd.bam 2>> {log}
+        samtools merge -f -@ {threads} $TMPDIR/plus_strand.bam $TMPDIR/r1_rev.bam $TMPDIR/r2_fwd.bam 2>> {log}
+        echo "Isolated reads from genes on positive strand..." > {log}
+        
+        # 1.2 gene is on negative strand
+        samtools view -q 255 -b -f 65 -F 16 {input.bam} > $TMPDIR/r1_fwd.bam 2>> {log}
+        samtools view -q 255 -b -f 145 {input.bam} > $TMPDIR/r2_rev.bam 2>> {log}
+        samtools merge -f -@ {threads} $TMPDIR/minus_strand.bam $TMPDIR/r1_fwd.bam $TMPDIR/r2_rev.bam 2>> {log}
+        echo "Isolated reads from genes on negative strand..." > {log}
+        
+        # 2. Depth calculation, Chromosome Filtering, and Sorting - required for bedGraphToBigWig
+        # The awk command reads {input.chrom_sizes} first, then the '-' tells it to read the samtools pipe.
+        samtools depth -s $TMPDIR/plus_strand.bam | \
+            awk -v OFS='\\t' 'NR==FNR {{valid_chroms[$1]=1; next}} $1 in valid_chroms {{print $1, $2-1, $2, $3}}' {input.chrom_sizes} - | \
+            LC_COLLATE=C sort -k1,1 -k2,2n > $TMPDIR/plus.bedgraph
+        
+        echo "Prepared sorted bedgraph for positive strand..." > {log}
+        
+        samtools depth -s $TMPDIR/minus_strand.bam | \
+            awk -v OFS='\\t' 'NR==FNR {{valid_chroms[$1]=1; next}} $1 in valid_chroms {{print $1, $2-1, $2, $3}}' {input.chrom_sizes} - | \
+            LC_COLLATE=C sort -k1,1 -k2,2n > $TMPDIR/minus.bedgraph
 
-
-# #############
-# # profile mutations
-# #############
-
-# rule get_uniquely_mapped_reads:
-#     """
-#         Get uniquely mapped reads
-#     """
-#     input:
-#         bam=os.path.join(
-#             config["output_dir"],
-#             "map_genome",
-#             "{sample}.Aligned.sortedByCoord.out.bam"),
-#     output:
-#         bam_filtered=os.path.join(
-#             config["output_dir"],
-#             "map_genome",
-#             "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam",
-#         ),
-#     params:
-#         outdir = os.path.join(
-#             config["output_dir"],
-#             "map_genome"),
-#     conda:
-#         "envs/samtools_latest.yaml"
-#     threads: 12
-#     resources:
-#         mem_mb=20000,
-#         runtime=60,
-#     log:
-#         os.path.join(config["local_log"],"get_uniquely_mapped_reads_{sample}.log"),
-#     shell:
-#         """(set +o pipefail; mkdir -p {params.outdir}; \
-#         samtools view -@ {threads} -h -q 255 -u {input.bam} | \
-#         samtools sort -@ {threads} -o {output.bam_filtered}; \
-#         samtools index -@ {threads} {output.bam_filtered}) \
-#         &> {log}"""
-
-# # make coverage - needed to quantify the abundance of mutations in RNA sequencing
-
-# rule make_genomic_coverage:
-#     """
-#         coverage WITH specified nucleotides, in order to groupby them - across whole genome or across genes
-#     """
-#     input:
-#         bam=os.path.join(
-#             config["output_dir"],
-#             "map_genome",
-#             "{merged_sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam",
-#         ),
-#         genome = config["genome_file"],
-#         mirBase_exons_bed = config['mirBase_exons_bed'],
-#     output:
-#         coverage_tsv_gz = os.path.join(
-#                         config["output_dir"],
-#                         "map_genome_merged",
-#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
-#         genome_wide_ref_nt_abundance_tsv = os.path.join(
-#                         config["output_dir"],
-#                         "map_genome_merged",
-#                         "{merged_sample}.merged.sorted.uniquely_mapped.genome_wide_ref_nt_abundance.tsv"),
-#         gene_level_ref_nt_abundance_tsv = os.path.join(
-#                         config["output_dir"],
-#                         "map_genome_merged",
-#                         "{merged_sample}.merged.sorted.uniquely_mapped.gene_level_ref_nt_abundance.tsv"),
-#     params:
-#         outdir = os.path.join(
-#             config["output_dir"],
-#             "map_genome_merged"),
-#         coverage_tsv = os.path.join(
-#                         config["output_dir"],
-#                         "map_genome_merged",
-#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv"),
-#     conda:
-#         "envs/samtools_latest.yaml"
-#     threads: 4
-#     resources:
-#         mem_mb=60000,
-#         runtime=500,
-#     log:
-#         os.path.join(config["local_log"],"make_genomic_coverage_{merged_sample}.log"),
-#     shell:
-#         """(set +o pipefail; mkdir -p {params.outdir}; \
-#         samtools view -@ {threads} -F 0x10 -u {input.bam} | \
-#         samtools depth -s - | \
-#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "+"}}' | \
-#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
-#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' > {params.coverage_tsv} && \
-#         samtools view -@ {threads} -f 0x10 -u {input.bam} | \
-#         samtools depth -s - | \
-#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "-"}}' | \
-#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
-#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' >> {params.coverage_tsv} && \
-#         pigz -p {threads} -f -c {params.coverage_tsv} > {output.coverage_tsv_gz}; \
-#         zcat {output.coverage_tsv_gz} | cut -f4,5 | \
-#         awk -F'\t' '{{ sums[$1] += $2 }} END {{ for (group in sums) {{ print group "\t" sums[group] }} }}' | \
-#         sort -k1,1 > {output.genome_wide_ref_nt_abundance_tsv}; \
-#         zcat {output.coverage_tsv_gz} | awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" $4 "\t" $5 "\t" $3}}' | \
-#         sort -k1,1 -k2,2n | bedtools intersect -s -wb -sorted -a - -b {input.mirBase_exons_bed} | \
-#         awk '{{print $10 "\t" $4 "\t" $5}}' | \
-#         awk -F'\t' '{{ key = $1 FS $2; sums[key] += $3 }} END {{ for (k in sums) {{  print k "\t" sums[k] }} }}' | \
-#         sort -k1,1 -k2,2 > {output.gene_level_ref_nt_abundance_tsv}; \
-#         rm -f {params.coverage_tsv}; \
-#         ) \
-#         &> {log}"""
-
-# rule rnaseqmut:
-#     """
-#         Profing mutations in RNA-seq-like data
-#     """
-#     input:
-#         reads = os.path.join(
-#                         config["output_dir"],
-#                         "map_genome",
-#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam"),
-#         reference_genome = config["genome_file"],
-#     output:
-#         out_txt=os.path.join(
-#                         config["output_dir"],
-#                         "rnaseqmut",
-#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.txt"),
-#     params:
-#         outdir=directory(os.path.join(
-#             config["output_dir"],
-#             "rnaseqmut")),
-#     threads: 4
-#     resources:
-#         mem_mb=10000,
-#         runtime=359,
-#         qos='6hours'
-#     singularity:
-#         "docker://davidliwei/rnaseqmut"
-#     log:
-#         os.path.join(config["local_log"],"rnaseqmut__{sample}.log")
-#     shell:
-#         """(set +o pipefail; mkdir -p {params.outdir}; \
-#         rnaseqmut --use_mdtag --max_mismatch 100 --mut_span 1 {input.reads} > {output.out_txt}) \
-#         &> {log}"""
-
-# rule FeatureCounts_mirBase_genomic_STAR:
-#     """
-#         quantify how many reads support each microRNA in a sample
-#     """
-#     input:
-#         bam=os.path.join(
-#                         config["output_dir"],
-#                         "map_genome",
-#                         "{sample}.Aligned.sortedByCoord.out.uniquely_mapped.bam"),
-#         gtf = config['mirBase_gtf'],
-#     output:
-#         out_gene_fragments_txt = os.path.join(
-#             config['output_dir'], 
-#             "gene_expression_quantification", 
-#             "FeatureCounts_mirBase_genomic_STAR",
-#             "{sample}.mirBase_genomic_STAR.txt"),
-#     params:
-#         outdir = os.path.join(
-#             config['output_dir'], 
-#             "gene_expression_quantification", 
-#             "FeatureCounts_mirBase_genomic_STAR"),
-#     conda:
-#         "envs/FeatureCounts.yaml"
-#     threads:8
-#     resources:
-#         mem_mb=20000,
-#         runtime=60,
-#     log:
-#         os.path.join(config["local_log"],"FeatureCounts_mirBase_genomic_STAR_{sample}.log")
-#     shell:
-#         """(set +o pipefail; mkdir -p {params.outdir}; \
-#         featureCounts -O --fraction -s 1 -T {threads} -t miRNA -g ID \
-#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
-#         # for PE mode
-#         # """(set +o pipefail; mkdir -p {params.outdir}; \
-#         # featureCounts -p --countReadPairs -O --fraction -s 1 -B -C -P -d 0 -D 10000000000000 -T {threads} -t miRNA -g ID \
-#         # -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+        echo "Prepared sorted bedgraph for negative strand..." > {log}
+        
+        # 3. Convert to BigWig
+        bedGraphToBigWig $TMPDIR/plus.bedgraph {input.chrom_sizes} {output.plus_bw}
+        bedGraphToBigWig $TMPDIR/minus.bedgraph {input.chrom_sizes} {output.minus_bw}        
+        echo "Successfully generated BigWigs for {wildcards.merged_sample}!" >> {log}
+        """

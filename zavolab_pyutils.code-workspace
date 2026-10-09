@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../../libs/zavolab_pyutils"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}
