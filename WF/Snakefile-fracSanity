@@ -1,0 +1,235 @@
+import os
+import sys
+import pandas as pd
+
+# Sanity_utils-based fracSanity pipeline for P-body pull-down (PD) vs Total RNA-seq.
+# Runs after Snakefile-basic (uses its FeatureCounts outputs). Every step calls the Python of the
+# sanity_utils conda environment (Sanity C++ binary, sanity_utils, zavolab_pyutils), with user site
+# packages disabled. Gene-set resources are downloaded by a local rule (compute nodes have no internet).
+
+sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "sanity_utils_pipeline"))
+from common import comparisons, safe_name, sample_metadata
+
+localrules: finish, fetch_genesets
+
+SCRIPTS = os.path.join(workflow.basedir, "scripts", "sanity_utils_pipeline")
+PY = "export PYTHONNOUSERSITE=1 OMP_NUM_THREADS={threads} OPENBLAS_NUM_THREADS={threads} MKL_NUM_THREADS={threads}; " \
+     "cd " + SCRIPTS + "; " + config["sanity_utils_python"]
+
+OUT = config["output_dir"]
+TABLES = config["tables_dir"]
+GENESETS = config["genesets_dir"]
+
+META = sample_metadata(pd.read_csv(config["samples_file"], sep="\t"))
+COHORTS = sorted(META["cohort"].unique())
+COHORT_SAFE = {safe_name(c): c for c in COHORTS}
+COMP = comparisons()
+COMP_SAFE = {safe_name(l): row for l, row in zip(COMP["label"], COMP.to_dict("records"))}
+FRACTIONS = ["Total", "PD"]
+
+
+rule finish:
+    input:
+        tables = os.path.join(TABLES, "fracSanity", "fracSanity_global_F.tsv"),
+        sets = os.path.join(TABLES, "gene_set_activities", "differential_recruitment.tsv"),
+        features = os.path.join(TABLES, "gene_features", "gene_features.tsv"),
+
+
+rule gene_features:
+    """
+        sequence features per gene: UTR/CDS lengths and GC, tAI, 5' end (TOP-like), RNAfold MFEs, RBP motifs
+    """
+    input:
+        gtf = config["gtf_file"],
+        utr_gtf = config["gtf_CDS_and_UTRs"],
+        genome = config["genome_file"],
+        genes = os.path.join(OUT, "inputs", "genes.tsv"),
+    output:
+        tsv = os.path.join(TABLES, "gene_features", "gene_features.tsv"),
+    params:
+        fasta_dir = os.path.join(TABLES, "gene_features", "sequences"),
+        bindir = config["sanity_utils_bin"],
+    threads: 8
+    resources:
+        mem_mb=16000,
+        runtime=120,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "gene_features.log"),
+    shell:
+        "export PATH={params.bindir}:$PATH; " + PY + """ gene_features.py --gtf {input.gtf} --utr-gtf {input.utr_gtf} \
+        --genome {input.genome} --genes {input.genes} --out {output.tsv} --fasta-dir {params.fasta_dir} \
+        --threads {threads} &> {log}"""
+
+
+rule fetch_genesets:
+    """
+        download GO, Reactome, KEGG and WikiPathways for yeast into a versioned store (needs internet)
+    """
+    output:
+        flag = os.path.join(GENESETS, "fetch.done"),
+    params:
+        dest = GENESETS,
+        bindir = config["sanity_utils_bin"],
+    log:
+        os.path.join(config["local_log"], "fetch_genesets.log"),
+    shell:
+        """(export PYTHONNOUSERSITE=1; \
+        {params.bindir}/sanity-utils-fetch-genesets all --organism yeast --dest {params.dest} \
+        && touch {output.flag}) &> {log}"""
+
+
+rule prepare_inputs:
+    """
+        counts of nuclear protein-coding genes, gene lengths and sample metadata
+    """
+    input:
+        samples = config["samples_file"],
+        gtf = config["gtf_file"],
+    output:
+        counts = os.path.join(OUT, "inputs", "counts.tsv"),
+        lengths = os.path.join(OUT, "inputs", "gene_lengths.tsv"),
+        meta = os.path.join(OUT, "inputs", "metadata.tsv"),
+        genes = os.path.join(OUT, "inputs", "genes.tsv"),
+    params:
+        fc_dir = config["featurecounts_dir"],
+        outdir = os.path.join(OUT, "inputs"),
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=30,
+        slurm_extra="'--qos=30min'",
+    log:
+        os.path.join(config["local_log"], "prepare_inputs.log"),
+    shell:
+        PY + """ prepare_inputs.py --start-samples {input.samples} --featurecounts-dir {params.fc_dir} \
+        --gtf {input.gtf} --outdir {params.outdir} &> {log}"""
+
+
+rule sanity_fraction:
+    """
+        Sanity normalisation (log2 TPM) of one fraction and replicate averages per cohort
+    """
+    input:
+        counts = rules.prepare_inputs.output.counts,
+        lengths = rules.prepare_inputs.output.lengths,
+        meta = rules.prepare_inputs.output.meta,
+    output:
+        pkl = os.path.join(OUT, "sanity", "{fraction}", "sanity.pkl"),
+    params:
+        inputs = os.path.join(OUT, "inputs"),
+        outdir = os.path.join(OUT, "sanity", "{fraction}"),
+        averaging = config.get("averaging_method", "reml"),
+    threads: 8
+    resources:
+        mem_mb=24000,
+        runtime=240,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "sanity_fraction__{fraction}.log"),
+    shell:
+        PY + """ run_sanity.py --inputs {params.inputs} --fraction {wildcards.fraction} \
+        --outdir {params.outdir} --threads {threads} --averaging-method {params.averaging} &> {log}"""
+
+
+rule fit_cohort:
+    """
+        fracSanity fit of one cohort: global fraction F and alpha_g per gene
+    """
+    input:
+        total = os.path.join(OUT, "sanity", "Total", "sanity.pkl"),
+        pd = os.path.join(OUT, "sanity", "PD", "sanity.pkl"),
+    output:
+        fit = os.path.join(OUT, "fracSanity", "fits", "{cohort}.pkl"),
+    params:
+        cohort = lambda wc: COHORT_SAFE[wc.cohort],
+    threads: 8
+    resources:
+        mem_mb=24000,
+        runtime=300,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "fit_cohort__{cohort}.log"),
+    shell:
+        PY + """ fit_cohort.py --total {input.total} --pd {input.pd} --cohort '{params.cohort}' \
+        --out {output.fit} --threads {threads} &> {log}"""
+
+
+rule differential:
+    """
+        differential recruitment between two cohorts
+    """
+    input:
+        test = lambda wc: os.path.join(OUT, "fracSanity", "fits", safe_name(COMP_SAFE[wc.comparison]["test"]) + ".pkl"),
+        ref = lambda wc: os.path.join(OUT, "fracSanity", "fits", safe_name(COMP_SAFE[wc.comparison]["reference"]) + ".pkl"),
+        genes = rules.prepare_inputs.output.genes,
+    output:
+        tsv = os.path.join(OUT, "fracSanity", "differential", "{comparison}.tsv"),
+        meta = os.path.join(OUT, "fracSanity", "differential", "{comparison}.meta.pkl"),
+    params:
+        label = lambda wc: COMP_SAFE[wc.comparison]["label"],
+    threads: 2
+    resources:
+        mem_mb=16000,
+        runtime=30,
+        slurm_extra="'--qos=30min'",
+    log:
+        os.path.join(config["local_log"], "differential__{comparison}.log"),
+    shell:
+        PY + """ differential.py --fit-test {input.test} --fit-ref {input.ref} --label '{params.label}' \
+        --genes {input.genes} --out-tsv {output.tsv} --out-meta {output.meta} &> {log}"""
+
+
+rule collect_tables:
+    """
+        final fracSanity tables in the project tables folder
+    """
+    input:
+        fits = expand(os.path.join(OUT, "fracSanity", "fits", "{cohort}.pkl"), cohort=list(COHORT_SAFE)),
+        diff = expand(os.path.join(OUT, "fracSanity", "differential", "{comparison}.tsv"), comparison=list(COMP_SAFE)),
+        meta = expand(os.path.join(OUT, "fracSanity", "differential", "{comparison}.meta.pkl"), comparison=list(COMP_SAFE)),
+        genes = rules.prepare_inputs.output.genes,
+    output:
+        glob_F = os.path.join(TABLES, "fracSanity", "fracSanity_global_F.tsv"),
+        alpha = os.path.join(TABLES, "fracSanity", "fracSanity_alpha_per_cohort.tsv"),
+        diff = os.path.join(TABLES, "fracSanity", "fracSanity_differential_recruitment.tsv"),
+    params:
+        outdir = os.path.join(TABLES, "fracSanity"),
+    threads: 1
+    resources:
+        mem_mb=16000,
+        runtime=30,
+        slurm_extra="'--qos=30min'",
+    log:
+        os.path.join(config["local_log"], "collect_tables.log"),
+    shell:
+        PY + """ collect_tables.py --fits {input.fits} --diff-tsv {input.diff} --diff-meta {input.meta} \
+        --genes {input.genes} --outdir {params.outdir} &> {log}"""
+
+
+rule set_activities:
+    """
+        ISMARA-style gene-set activities, recruitment and differential recruitment of gene sets
+    """
+    input:
+        total = os.path.join(OUT, "sanity", "Total", "sanity.pkl"),
+        pd = os.path.join(OUT, "sanity", "PD", "sanity.pkl"),
+        flag = rules.fetch_genesets.output.flag,
+        genes = rules.prepare_inputs.output.genes,
+    output:
+        diff = os.path.join(TABLES, "gene_set_activities", "differential_recruitment.tsv"),
+        rec = os.path.join(TABLES, "gene_set_activities", "recruitment_per_cohort.tsv"),
+    params:
+        outdir = os.path.join(TABLES, "gene_set_activities"),
+        averaging = config.get("averaging_method", "reml"),
+        genesets = GENESETS,
+    threads: 8
+    resources:
+        mem_mb=32000,
+        runtime=240,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "set_activities.log"),
+    shell:
+        PY + """ set_activities.py --total {input.total} --pd {input.pd} --genesets {params.genesets} \
+        --genes {input.genes} --outdir {params.outdir} --averaging-method {params.averaging} &> {log}"""

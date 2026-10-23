@@ -1,0 +1,3221 @@
+import os
+import pandas as pd
+import shutil
+import yaml
+from shlex import quote
+from typing import Tuple
+from snakemake.utils import validate
+
+localrules:  finish
+
+# Get sample table
+samples = pd.read_csv(
+    config["samples_file"],
+    header=0,
+    index_col=None,
+    comment='#',
+    engine='python',
+    sep="\t")
+samples = samples.drop_duplicates('sample').reset_index(drop=True)
+samples.index = samples['sample']
+
+rule finish:
+    input:
+        fastqc_input=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),                 
+        fastqc_trimmed=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.trimmed_adapters.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),
+        fastqc_trimmed_2round=expand(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.trimmed_adapters_2round.R1",
+            "{sample}"),
+        sample = list(samples.index.values)),
+        
+        bai=expand(os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam.bai",
+        ),
+        sample = list(samples.index.values)),
+        genomic_counts_MergedSampleLevel = expand(os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq",
+            "{merged_sample}.txt"),
+        merged_sample = list(samples['merged_sample'].unique())),
+        genomic_counts_SampleLevel_with_MM = expand(os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_with_MM",
+            "{sample}.txt"),
+        sample = list(samples.index.values)),
+        genomic_counts_SampleLevel_without_MM = expand(os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_without_MM",
+            "{sample}.txt"),
+        sample = list(samples.index.values)),
+        mapping_stats=expand(os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{sample}.mapping_stats.txt",
+        ),
+        sample = list(samples.index.values)),
+        # fastqc_uniquely_mapped=expand(os.path.join(
+        #     config["output_dir"],
+        #     "fastqc",
+        #     "uniquely_mapped",
+        #     "{sample}"),
+        # sample = list(samples['merged_sample'].unique())),
+        # rnaseqmut_txt=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "rnaseqmut",
+        #                 "{sample}.merged.sorted.uniquely_mapped.txt"),
+        # sample = list(samples['merged_sample'].unique())),
+        # coverage_tsv_gz = expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+
+        # self_mapping_bai=os.path.join(
+        #     config["output_dir"],
+        #     "map_transcriptome",
+        #     "self_mapping.Aligned.sortedByCoord.out.bam.bai",
+        # ),
+
+        # fasta_gz_MM_reads=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{sample}.MM_reads.fasta.gz"),
+        # sample = list(samples['merged_sample'].unique())),
+        # MM_details=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{sample}.MM_reads.detail.txt"),
+        # sample = list(samples['merged_sample'].unique())),
+        # fasta_concatenated_transcriptome=os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "concatenated_transcriptome.fasta"),
+        # transcriptome_bai=expand(os.path.join(
+        #     config["output_dir"],
+        #     "map_transcriptome",
+        #     "{sample}.Aligned.sortedByCoord.out.bam.bai",
+        # ),
+        # sample = list(samples.index.values)),
+        # out_stats_tsv_merged=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{merged_sample}.MM_stats.tsv"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # groupby_bed=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "{merged_sample}.groupby.bed"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+
+        # # self_mapping_bam_2pass=os.path.join(
+        # #     config["output_dir"],
+        # #     "map_transcriptome",
+        # #     "self_mapping_2pass.Aligned.sortedByCoord.out.bam",
+        # # ),
+        # # self_mapping_bam_2pass_strict=os.path.join(
+        # #     config["output_dir"],
+        # #     "map_transcriptome",
+        # #     "self_mapping_2pass_strict.Aligned.sortedByCoord.out.bam",
+        # # ),
+        # # self_mapping_bam_2pass_strict_FL=os.path.join(
+        # #     config["output_dir"],
+        # #     "map_transcriptome",
+        # #     "self_mapping_2pass_strict_FL.Aligned.sortedByCoord.out.bam",
+        # # ),
+
+        # self_mapping_bam_2pass_strict_FL_from_filtered=os.path.join(
+        #     config["output_dir"],
+        #     "map_transcriptome",
+        #     "self_mapping_2pass_strict_FL_from_filtered.Aligned.sortedByCoord.out.bam",
+        # ),
+        # merged_transcriptome_bam=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_transcriptome_merged",
+        #                 "{merged_sample}.merged.sorted.bam"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # FeatureCounts_transcriptome_mappings = expand(os.path.join(
+        #     config['output_dir'], 
+        #     "gene_expression_quantification", 
+        #     "FeatureCounts_transcriptome_mappings",
+        #     "{merged_sample}.txt"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # read_intersection=expand(os.path.join(
+        #     config["output_dir"],
+        #     "map_transcriptome_merged",
+        #     "{merged_sample}.read_intersection.tsv",
+        # ),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # merged_transcriptome_NAME_sorted_bam=expand(os.path.join(
+        #                 config["output_dir"],
+        #                 "map_transcriptome_merged",
+        #                 "{merged_sample}.merged.NAME_sorted.bam"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # FeatureCounts_MM_unique_transcriptome_mappings = expand(os.path.join(
+        #     config['output_dir'], 
+        #     "gene_expression_quantification", 
+        #     "FeatureCounts_MM_unique_transcriptome_mappings",
+        #     "{merged_sample}.txt"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # modified_gtf_transcriptome=os.path.join(
+        #                 config["output_dir"],
+        #                 "map_genome_merged",
+        #                 "final_concatenated_transcriptome.modified.gtf"),
+        # mapping_stats=expand(os.path.join(
+        #     config["output_dir"],
+        #     "mapping_stats",
+        #     "{merged_sample}.mapping_stats.txt"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # read_stats=expand(os.path.join(
+        #     config["output_dir"],
+        #     "read_stats",
+        #     "{sample}.read_stats.txt",
+        # ),
+        # sample = list(samples.index.values)),
+        # transcriptome_mapping_final_gene_counts = expand(os.path.join(
+        #     config['output_dir'], 
+        #     "gene_expression_quantification", 
+        #     "FeatureCounts_final_transcriptome_mappings_gene_counts",
+        #     "{merged_sample}.txt"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+        # transcriptome_mapping_final_gene_type_counts = expand(os.path.join(
+        #     config['output_dir'], 
+        #     "gene_expression_quantification", 
+        #     "FeatureCounts_final_transcriptome_mappings_gene_type_counts",
+        #     "{merged_sample}.txt"),
+        # merged_sample=list(samples['merged_sample'].unique())),
+
+
+rule index_genome:
+    """
+        use samtools to index genome
+    """
+    input:
+        genome = config["genome_file"],
+    output:
+        genome_fai = config["genome_file"]+'.fai'
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=80000,
+        runtime=240,
+    log:
+        os.path.join(config["local_log"],"index_genome.log"),
+    shell:
+        """(set +o pipefail; \
+        samtools faidx -@ {threads} {input.genome}) \
+        &> {log}"""
+
+
+rule fastqc_input:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R1",
+            "{sample}")),
+    params:
+        reads_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "0.input.R2",
+            "{sample}")),
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=29,
+        qos='30min'
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_input__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {params.outdir_R2}; \
+        if [[ "{input.reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} \
+        --threads {threads} \
+        {input.reads_R1}; fi; \
+        if [[ "{params.reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {params.outdir_R2} \
+        --threads {threads} \
+        {params.reads_R2}; fi) \
+        &> {log}"""
+
+rule remove_adapters:
+    """
+        Remove adapters
+    """
+    input:
+        reads_R1 = lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+    output:
+        trimmed_reads_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R1.fastq.gz"),
+    params:
+        reads_R2 = lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+        out_trimmed_reads_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R2.fastq.gz"),
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters"),
+        adapters_3_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1_3p"],
+        adapters_3_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2_3p"],
+        min_read_len = lambda wildcards: samples.loc[wildcards.sample, "min_read_len"],
+    conda:
+        "envs/cutadapt.yaml"
+    threads: 10
+    resources:
+        mem_mb=50000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"remove_adapters__{sample}.log")
+    shell:
+        """(mkdir -p {params.outdir}; \
+        if ! [[ "{params.reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        cutadapt -m {params.min_read_len} -j {threads} -a {params.adapters_3_R1} -o {output.trimmed_reads_R1} {input.reads_R1}; 
+        else \
+        cutadapt -m {params.min_read_len} -j {threads} -a {params.adapters_3_R1} -A {params.adapters_3_R2} -o {output.trimmed_reads_R1} -p {params.out_trimmed_reads_R2} {input.reads_R1} {params.reads_R2}; fi) \
+        &> {log}"""
+
+rule fastqc_remove_adapters:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R1.fastq.gz"),
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.trimmed_adapters.R1",
+            "{sample}")),
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "1.trimmed_adapters.R2",
+            "{sample}")),
+    params:
+        orig_reads_R1 = lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        orig_reads_R2 = lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R2.fastq.gz"),       
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=60,
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_remove_adapters__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {output.outdir_R2}; \
+        if [[ "{params.orig_reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} --threads {threads} {input.reads_R1}; fi; \
+        if [[ "{params.orig_reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R2} --threads {threads} {params.reads_R2}; fi) \
+        &> {log}"""
+
+rule remove_adapters_2round:
+    """
+        Remove adapters, 2round
+    """
+    input:
+        reads_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R1.fastq.gz"),
+    output:
+        trimmed_reads_R1 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R1.fastq.gz"),
+    params:
+        reads_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "1.trimmed_adapters",            
+            "{sample}.R2.fastq.gz"),
+        out_trimmed_reads_R2 = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R2.fastq.gz"),
+        outdir = os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round"),
+        adapters_3_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1_3p_2round"],
+        adapters_3_R2=lambda wildcards: samples.loc[wildcards.sample, "fq2_3p"],
+        min_read_len = lambda wildcards: samples.loc[wildcards.sample, "min_read_len"],
+        orig_reads_R1 = lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        orig_reads_R2 = lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+
+    conda:
+        "envs/cutadapt.yaml"
+    threads: 10
+    resources:
+        mem_mb=50000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"remove_adapters_2round__{sample}.log")
+    shell:
+        """(mkdir -p {params.outdir}; \
+        if ! [[ "{params.orig_reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        cutadapt -m {params.min_read_len} -j {threads} -a {params.adapters_3_R1} -o {output.trimmed_reads_R1} {input.reads_R1}; 
+        else \
+        cutadapt -m {params.min_read_len} -j {threads} -a {params.adapters_3_R1} -A {params.adapters_3_R2} -o {output.trimmed_reads_R1} -p {params.out_trimmed_reads_R2} {input.reads_R1} {params.reads_R2}; fi) \
+        &> {log}"""
+
+rule fastqc_remove_adapters_2round:
+    """
+        A quality control tool for high throughput sequence data
+    """
+    input:
+        reads_R1=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R1.fastq.gz"),
+    output:
+        outdir_R1=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.trimmed_adapters_2round.R1",
+            "{sample}")),
+        outdir_R2=directory(os.path.join(
+            config["output_dir"],
+            "fastqc",
+            "2.trimmed_adapters_2round.R2",
+            "{sample}")),
+    params:
+        orig_reads_R1 = lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+        orig_reads_R2 = lambda wildcards: samples.loc[wildcards.sample, "fq2"],
+        reads_R2=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R2.fastq.gz"),       
+    threads: 4
+    resources:
+        mem_mb=10000,
+        runtime=60,
+    singularity:
+        "docker://staphb/fastqc:0.12.1"
+    log:
+        os.path.join(config["local_log"],"fastqc_remove_adapters_2round__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {output.outdir_R1}; mkdir -p {output.outdir_R2}; \
+        if [[ "{params.orig_reads_R1}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R1} --threads {threads} {input.reads_R1}; fi; \
+        if [[ "{params.orig_reads_R2}" =~ [^Xx[:space:]] ]]; then \
+        fastqc --outdir {output.outdir_R2} --threads {threads} {params.reads_R2}; fi) \
+        &> {log}"""
+
+
+############
+## map to genome
+############
+
+rule create_index_star:
+    """
+        Create index for STAR alignments
+    """
+    input:
+        genome=config["genome_file"],
+        gtf = config["gtf_file"],
+    output:
+        chromosome_info=os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF_genome",
+            "STAR_index",
+            "chrNameLength.txt",
+        ),
+        chromosomes_names=os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF_genome",
+            "STAR_index",
+            "chrName.txt",
+        ),
+    params:
+        output_dir=lambda wildcards, output: os.path.dirname(output.chromosome_info),
+        outFileNamePrefix=os.path.join(
+            config["output_dir"],"STAR_indices", config["organism"], "with_GTF_genome", "STAR_index/STAR_"
+        ),
+        sjdbOverhang = 100
+    conda:
+        "envs/STAR.yaml"
+    threads: 16
+    resources:
+        mem_mb=80000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"create_index_star.log"),
+    shell:
+        """(mkdir -p {params.output_dir}; \
+        STAR \
+        --runMode genomeGenerate \
+        --genomeDir {params.output_dir} \
+        --genomeFastaFiles {input.genome} \
+        --runThreadN {threads} \
+        --outFileNamePrefix {params.outFileNamePrefix} \
+        --sjdbGTFfile {input.gtf} \
+        ) \
+        &> {log}"""
+
+rule map_genome_star:
+    """
+        Map to genome using STAR;
+        In RNA-seq we can do local alignment because we are not sure about read ends after trimming
+    """
+    input:
+        chromosome_info = os.path.join(
+            config["output_dir"],
+            "STAR_indices",
+            config["organism"],
+            "with_GTF_genome",
+            "STAR_index",
+            "chrNameLength.txt",
+        ),
+        reads=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R1.fastq.gz"),
+    output:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+        log_final_file=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Log.final.out",
+        ),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "map_genome"),
+        STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+        outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+            "Aligned.sortedByCoord.out.bam", ""
+        ),       
+    conda:
+        "envs/STAR.yaml"
+    threads: 12
+    resources:
+        mem_mb=80000,
+        runtime=300,
+    log:
+        os.path.join(config["local_log"],"map_genome_star__{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        STAR \
+        --runMode alignReads \
+        --alignEndsType Local \
+        --runThreadN {threads} \
+        --genomeDir {params.STAR_index_dir} \
+        --readFilesIn {input.reads} \
+        --readFilesCommand zcat \
+        --outFileNamePrefix {params.outFileNamePrefix} \
+        --genomeLoad NoSharedMemory \
+        --outSAMtype BAM SortedByCoordinate \
+        --outFilterType BySJout \
+        --outFilterMismatchNoverLmax 0.1 \
+        --outFilterMatchNmin 20 \
+        --alignIntronMin 10 \
+        --alignSJoverhangMin 7 \
+        --alignSJDBoverhangMin 7 \
+        --outFilterScoreMinOverLread 0  \
+        --outFilterMatchNminOverLread 0 \
+        --twopassMode None \
+        --outBAMsortingThreadN {threads} \
+        --alignTranscriptsPerReadNmax 50000 \
+        --winAnchorMultimapNmax 50000 \
+        --outFilterMultimapNmax 50000 \
+        --outSAMprimaryFlag AllBestScore \
+        --outSAMattributes NH HI AS nM MD \
+        --limitOutSJcollapsed 5000000 \
+        --limitBAMsortRAM 15000000000 \
+        --limitOutSAMoneReadBytes 30000000) \
+        &> {log}"""
+
+rule samtools_index_mapped:
+    """
+        index bam files
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+    output:
+        bai=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam.bai",
+        ),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"samtools_index_mapped_{sample}.log")
+    shell:
+        """(samtools index -@ {threads} \
+        {input.bam}; ) &> {log}"""
+
+### remove secondary alignments
+
+rule samtools_remove_secondary:
+    """
+        index bam files
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.bam",
+        ),
+    output:
+        filtered_bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"samtools_remove_secondary_{sample}.log")
+    shell:
+        """(samtools view -h -u -F 0x100 {input.bam} | samtools sort -@ {threads} -o {output.filtered_bam} && \
+        samtools index -@ {threads} {output.filtered_bam}; ) &> {log}"""
+
+rule FeatureCounts_genomic_sample_level_with_MM:
+    """
+        quantify how many reads support each gene, with weigthed MM reads
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+        gtf = config['gtf_file'],
+    output:
+        out_gene_fragments_txt = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_with_MM",
+            "{sample}.txt"),
+    params:
+        outdir = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_with_MM"),
+    conda:
+        "envs/FeatureCounts.yaml"
+    threads:8
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"FeatureCounts_genomic_sample_level_with_MM_{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        featureCounts -M -O --fraction -s 1 -T {threads} -t exon -g gene_id \
+        -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+
+rule FeatureCounts_genomic_sample_level_without_MM:
+    """
+        quantify how many reads support each gene, without MM reads; only uniquely mapped
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+        gtf = config['gtf_file'],
+    output:
+        out_gene_fragments_txt = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_without_MM",
+            "{sample}.txt"),
+    params:
+        outdir = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq_sample_level_without_MM"),
+    conda:
+        "envs/FeatureCounts.yaml"
+    threads:8
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"FeatureCounts_genomic_sample_level_without_MM_{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        featureCounts -O --fraction -s 1 -T {threads} -t exon -g gene_id \
+        -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+
+rule count_UM_MM_Total_reads:
+    """
+        Count the abundance of UM/MM reads on different steps of mapping
+        write to the ouput text file, line after line
+    """
+    input:
+        bam_genome=os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+        input_reads=os.path.join(
+            config["output_dir"],
+            "fastq",
+            "2.trimmed_adapters_2round",            
+            "{sample}.R1.fastq.gz"),
+    output:
+        mapping_stats=os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{sample}.mapping_stats.txt",
+        ),
+        success_flag=os.path.join(
+            config["output_dir"],
+            "mapping_stats",
+            "{sample}.success",
+        ),
+    params:
+        outdir = os.path.join(
+            config["output_dir"],
+            "mapping_stats"),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 12
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"count_UM_MM_Total_reads_{sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        rm -f {output.success_flag}; \
+        echo '>number of UM reads; genomic mapping' > {output.mapping_stats}; \
+        samtools view -@ {threads} -q 255 {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo '>total number of mapped reads; genomic mapping' >> {output.mapping_stats}; \
+        samtools view -@ {threads} {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+        echo '>total number of input reads' >> {output.mapping_stats}; \
+        zcat {input.input_reads} | seqkit stats -T | cut -f4 | tail -n 1 >> {output.mapping_stats}; \
+        echo 'success' > {output.success_flag}; \
+        ) &> {log}"""
+
+### merge technical replicates
+
+rule merge_technical_replicates:
+    """
+        merge technical replicates
+    """
+    input:
+        bam=lambda wildcards: expand(os.path.join(
+            config["output_dir"],
+            "map_genome",
+            "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+        ),
+        sample = list(samples.loc[samples['merged_sample']==wildcards.merged_sample]['sample'])),
+    output:
+        merged_bam=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam"),
+    params:
+        merged_nonsorted_bam = os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.nonsorted.bam"),
+        merged_sample = "{merged_sample}",
+        outdir = os.path.join(
+           config["output_dir"],
+                        "map_genome_merged"),
+        merged_bai=os.path.join(
+                        config["output_dir"],
+                        "map_genome_merged",
+                        "{merged_sample}.merged.sorted.bam.bai"),
+    conda:
+        "envs/samtools_latest.yaml"
+    threads: 8
+    log:
+        os.path.join(config["local_log"],"merge_technical_replicates_{merged_sample}.log"),
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        k=0; for i in {input.bam}; do k=$(( $k+1 )); done; \
+        if [[ $k > 1 ]]; then \
+        samtools merge {params.merged_nonsorted_bam} {input.bam} -f -@ {threads}; \
+        samtools sort -@ {threads} {params.merged_nonsorted_bam} > {output.merged_bam}; \
+        samtools index -@ {threads} {output.merged_bam}; \
+        rm {params.merged_nonsorted_bam}; \
+        else \
+        rm -f {output.merged_bam} && ln -f -s {input.bam} {output.merged_bam}; \
+        rm -f {params.merged_bai} && ln -f -s {input.bam}.bai {params.merged_bai}; \
+        fi; \
+        ) &> {log}"""
+
+rule FeatureCounts_genomic:
+    """
+        quantify how many reads support each gene, with weigthed MM reads
+    """
+    input:
+        bam=os.path.join(
+            config["output_dir"],
+            "map_genome_merged",
+            "{merged_sample}.merged.sorted.bam",
+        ),
+        gtf = config['gtf_file'],
+    output:
+        out_gene_fragments_txt = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq",
+            "{merged_sample}.txt"),
+    params:
+        outdir = os.path.join(
+            config['output_dir'], 
+            "gene_expression_quantification", 
+            "FeatureCounts_genomic_RNAseq"),
+    conda:
+        "envs/FeatureCounts.yaml"
+    threads:8
+    resources:
+        mem_mb=20000,
+        runtime=60,
+    log:
+        os.path.join(config["local_log"],"FeatureCounts_genomic_{merged_sample}.log")
+    shell:
+        """(set +o pipefail; mkdir -p {params.outdir}; \
+        featureCounts -M -O --fraction -s 1 -T {threads} -t CDS -g gene_id \
+        -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}) &> {log}"""
+
+# #############
+# # profile mutations
+# #############
+
+# rule get_uniquely_mapped_reads:
+#     """
+#         Get uniquely mapped reads
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "{merged_sample}.merged.sorted.bam",
+#         ),
+#     output:
+#         bam_filtered=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.bam"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"get_uniquely_mapped_reads_{merged_sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         samtools view -@ {threads} -h -q 255 -u {input.bam} | \
+#         samtools sort -@ {threads} -o {output.bam_filtered}; \
+#         samtools index -@ {threads} {output.bam_filtered}) \
+#         &> {log}"""        
+
+# rule fastqc_uniquely_mapped:
+#     """
+#         A quality control tool for high throughput sequence data
+#     """
+#     input:
+#         reads = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.bam"),
+#     output:
+#          outdir=directory(os.path.join(
+#             config["output_dir"],
+#             "fastqc",
+#             "uniquely_mapped",
+#             "{merged_sample}")),
+#     threads: 4
+#     resources:
+#         mem_mb=10000,
+#         runtime=60,
+#         qos='30min'
+#     singularity:
+#         "docker://staphb/fastqc:0.12.1"
+#     log:
+#         os.path.join(config["local_log"],"fastqc_uniquely_mapped__{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {output.outdir}; \
+#         fastqc --outdir {output.outdir} \
+#         --threads {threads} \
+#         {input.reads}) \
+#         &> {log}"""
+
+# # make coverage - needed to quantify the abundance of mutations in RNA sequencing
+
+# rule make_genomic_coverage:
+#     """
+#         coverage WITH specified nucleotides, in order to groupby them - across whole genome or across genes
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.bam"),
+#         genome = config["genome_file"],
+#         exons_bed = config['annotated_exons_bed_file'],
+#     output:
+#         coverage_tsv_gz = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv.gz"),
+#         genome_wide_ref_nt_abundance_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.genome_wide_ref_nt_abundance.tsv"),
+#         gene_level_ref_nt_abundance_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.gene_level_ref_nt_abundance.tsv"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         coverage_tsv = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.coverage.tsv"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=60000,
+#         runtime=500,
+#     log:
+#         os.path.join(config["local_log"],"make_genomic_coverage_{merged_sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         samtools view -@ {threads} -F 0x10 -u {input.bam} | \
+#         samtools depth -s - | \
+#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "+"}}' | \
+#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
+#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' > {params.coverage_tsv} && \
+#         samtools view -@ {threads} -f 0x10 -u {input.bam} | \
+#         samtools depth -s - | \
+#         awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" "t" "\t" $3 "\t" "-"}}' | \
+#         bedtools getfasta -s -bedOut -fi {input.genome} -bed - | \
+#         awk '{{print $1 "\t" $3 "\t" $6 "\t" $7 "\t" $5}}' >> {params.coverage_tsv} && \
+#         pigz -p {threads} -f -c {params.coverage_tsv} > {output.coverage_tsv_gz}; \
+#         zcat {output.coverage_tsv_gz} | cut -f4,5 | \
+#         awk -F'\t' '{{ sums[$1] += $2 }} END {{ for (group in sums) {{ print group "\t" sums[group] }} }}' | \
+#         sort -k1,1 > {output.genome_wide_ref_nt_abundance_tsv}; \
+#         zcat {output.coverage_tsv_gz} | awk '{{print $1 "\t" ($2 - 1) "\t" $2 "\t" $4 "\t" $5 "\t" $3}}' | \
+#         sort -k1,1 -k2,2n | bedtools intersect -s -wb -sorted -a - -b {input.exons_bed} | \
+#         awk '{{print $10 "\t" $4 "\t" $5}}' | \
+#         awk -F'\t' '{{ key = $1 FS $2; sums[key] += $3 }} END {{ for (k in sums) {{  print k "\t" sums[k] }} }}' | \
+#         sort -k1,1 -k2,2 > {output.gene_level_ref_nt_abundance_tsv}; \
+#         rm -f {params.coverage_tsv}; \
+#         ) \
+#         &> {log}"""
+
+# rule rnaseqmut:
+#     """
+#         Profing mutations in RNA-seq-like data
+#     """
+#     input:
+#         reads = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.bam"),
+#         reference_genome = config["genome_file"],
+#     output:
+#         out_txt=os.path.join(
+#                         config["output_dir"],
+#                         "rnaseqmut",
+#                         "{merged_sample}.merged.sorted.uniquely_mapped.txt"),
+#     params:
+#         outdir=directory(os.path.join(
+#             config["output_dir"],
+#             "rnaseqmut")),
+#     threads: 4
+#     resources:
+#         mem_mb=10000,
+#         runtime=359,
+#         qos='6hours'
+#     singularity:
+#         "docker://davidliwei/rnaseqmut"
+#     log:
+#         os.path.join(config["local_log"],"rnaseqmut__{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         rnaseqmut --use_mdtag --max_mismatch 100 --mut_span 1 {input.reads} > {output.out_txt}) \
+#         &> {log}"""
+
+# #############
+# # custom assignment of multimapped reads
+# #############
+
+# rule collapse_reads:
+#     """
+#         bedtools merge
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "{sample}.merged.sorted.bam",
+#         ),
+#         genome_fai = config["genome_file"]+'.fai'
+#     output:
+#         bed = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.merged.sorted.bed"),
+#         bed_collaped_MM_only =os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.MM_only.bed"),
+#         bed_collaped_All =os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.All.bed"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         min_overlap = 3,
+#     conda:
+#         "envs/bedtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=40000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"collapse_reads_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         bedtools bamtobed -i {input.bam} -split | sort -k 1,1 -k2,2n > {output.bed} && \
+#         awk -F'\t' '$5 < 255' {output.bed} | bedtools slop -s -b -{params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n | bedtools merge -s -d 0 -c 6 -o distinct | \
+#         awk -F'\t' '{{print $1 "\t" $2 "\t" $3 "\t" NR "\t" 0 "\t" $4 }}' | bedtools slop -s -b {params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n > {output.bed_collaped_MM_only} && \
+#         cat {output.bed} | bedtools slop -s -b -{params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n | bedtools merge -s -d 0 -c 6 -o distinct | \
+#         awk -F'\t' '{{print $1 "\t" $2 "\t" $3 "\t" NR "\t" 0 "\t" $4 }}' | bedtools slop -s -b {params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n > {output.bed_collaped_All};) \
+#         &> {log}"""
+
+# rule collapse_reads_across_samples:
+#     """
+#         bedtools merge; require overlap of at least 3 nt to merge
+#     """
+#     input:
+#         bed_collaped_All = lambda wildcards: expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.All.bed"),
+#                         sample = list(samples['merged_sample'].unique())
+#                         ),
+#         genome_fai = config["genome_file"]+'.fai'
+#     output:
+#         bed_collaped_across_samples = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collaped_across_samples.bed"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         min_overlap = 3,
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=80000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"collapse_reads_across_samples.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         cat {input.bed_collaped_All} | \
+#         bedtools slop -s -b -{params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n | \
+#         bedtools merge -s -d 0 -c 6 -o distinct | \
+#         awk -F'\t' '{{print $1 "\t" $2 "\t" $3 "\t" NR "\t" 0 "\t" $4 }}' | \
+#         bedtools slop -s -b {params.min_overlap} -g {input.genome_fai} | sort -k 1,1 -k2,2n > {output.bed_collaped_across_samples}) \
+#         &> {log}"""
+
+# ###
+# # here, collapsed "expression islands" should be intersected with annotation. Islands, not intersecting with anything, should be removed.
+# # then, we should extract sequences and deduplicate, but save the information on which loci were duplicated
+# ###
+
+# rule intersect_collapsed_reads_with_annotated_exons:
+#     """
+#         bedtools intersect
+#     """
+#     input:
+#         bed_collaped_across_samples = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collaped_across_samples.bed"),
+#         annotated_exons_bed_file = config["annotated_exons_bed_file"],
+#     output:
+#         bed_collapsed_across_samples_intersected = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples_intersected.bed"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         min_overlap_frac = 0.3,
+#     conda:
+#         "envs/bedtools_latest.yaml"
+#     threads: 3
+#     resources:
+#         mem_mb=60000,
+#         runtime=200,
+#     log:
+#         os.path.join(config["local_log"],"intersect_collapsed_reads_with_annotated_exons.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         bedtools intersect -f {params.min_overlap_frac} -sorted -u -s -a {input.bed_collaped_across_samples} -b {input.annotated_exons_bed_file} | sort -k 1,1 -k2,2n > {output.bed_collapsed_across_samples_intersected}) \
+#         &> {log}"""
+
+
+# rule extract_fasta_from_collapsed_reads_across_samples:
+#     """
+#         bedtools getfasta
+#     """
+#     input:
+#         bed_collaped_across_samples = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples_intersected.bed"),
+#         genome=config["genome_file"],
+#     output:
+#         fasta_gz_collapsed_All=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         fasta_collapsed_All=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.fasta"),
+#     conda:
+#         "envs/bedtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=40000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"extract_fasta_from_collapsed_reads_across_samples.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         bedtools getfasta -s -name -fi {input.genome} -bed {input.bed_collaped_across_samples} > {params.fasta_collapsed_All} && \
+#         pigz --fast -p {threads} {params.fasta_collapsed_All}) \
+#         &> {log}"""
+
+# rule deduplicate_collapsed_reads_across_samples:
+#     """
+#         seqkit
+#     """
+#     input:
+#         fasta_gz=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.fasta.gz"),
+#     output:
+#         fasta_gz_Deduplicated=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.fasta.gz"),
+#         dupl_details=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.duplicated_seqs.details.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=80000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"deduplicate_collapsed_reads_across_samples.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         zcat {input.fasta_gz} | seqkit rmdup -P -s -i -o {output.fasta_gz_Deduplicated} -D {output.dupl_details}) \
+#         &> {log}"""
+
+# rule split_collapsed_reads_across_samples:
+#     """
+#         split by chromosomes
+#     """
+#     input:
+#         fasta_gz=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.fasta.gz"),
+#     output:
+#         fasta_gz_chr=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "collapsed_across_samples.deduplicated.{chromosome}.{strand}.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "split_by_chromosome"),
+#         fasta_chr=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "collapsed_across_samples.deduplicated.{chromosome}.{strand}.fasta"),
+#         chromosome = "{chromosome}",
+#         strand = "{strand}"
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"split_collapsed_reads_across_samples_{chromosome}_{strand}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         zcat {input.fasta_gz} | seqkit grep -n -i -r -p "{params.chromosome}:.*\\(\\{params.strand}\\)" > {params.fasta_chr} && \
+#         pigz --fast -p {threads} {params.fasta_chr}) \
+#         &> {log}"""
+
+# rule concatenate_collapsed_sequences:
+#     """
+#         concatenate fasta records belonging to the same chromosome and strand
+#     """
+#     input:
+#         fasta_gz_Deduplicated=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "collapsed_across_samples.deduplicated.{chromosome}.{strand}.fasta.gz"),
+#         script=os.path.join(workflow.basedir, "scripts", "concatenate_collapsed_sequences.py"),
+#     output:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "concatenated_transcriptome.{chromosome}.{strand}.fasta"),
+#         gtf_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "concatenated_transcriptome.{chromosome}.{strand}.gtf"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "split_by_chromosome"),
+#         gap_sequence_length=20,
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"concatenate_collapsed_sequences_{chromosome}_{strand}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --input_fasta {input.fasta_gz_Deduplicated} \
+#         --output_fasta {output.fasta_concatenated_transcriptome} \
+#         --output_gtf {output.gtf_concatenated_transcriptome} \
+#         --gap_sequence_length {params.gap_sequence_length} \
+#         --include_strand_label_into_chromosome_name Y) \
+#         &> {log}"""
+
+# # rule modify_transcriptome_chr_specific_files:
+# #     """
+# #         rename and change slitghly the chromosome names, technical step
+# #     """
+# #     input:
+# #         fasta_concatenated_transcriptome_chr_specific = os.path.join(
+# #                         config["output_dir"],
+# #                         "map_genome_merged",
+# #                         "split_by_chromosome",
+# #                         "concatenated_transcriptome.{chromosome}.{strand}.fasta"),
+# #         gtf_concatenated_transcriptome_chr_specific = os.path.join(
+# #                         config["output_dir"],
+# #                         "map_genome_merged",
+# #                         "split_by_chromosome",
+# #                         "concatenated_transcriptome.{chromosome}.{strand}.gtf"),
+# #     output:
+# #         fasta_concatenated_transcriptome_chr_specific_modified=os.path.join(
+# #                         config["output_dir"],
+# #                         "map_genome_merged",
+# #                         "split_by_chromosome",
+# #                         "concatenated_transcriptome_modified.{chromosome}.{strand}.fasta"),
+# #         gtf_concatenated_transcriptome_chr_specific_modified=os.path.join(
+# #                         config["output_dir"],
+# #                         "map_genome_merged",
+# #                         "split_by_chromosome",
+# #                         "concatenated_transcriptome_modified.{chromosome}.{strand}.gtf"),
+# #     params:
+# #         outdir = os.path.join(
+# #             config["output_dir"],
+# #             "map_genome_merged",
+# #             "split_by_chromosome"),
+# #         chromosome = "{chromosome}",
+# #         strand = "{strand}",
+# #     conda:
+# #         "envs/seqkit_282.yaml"
+# #     threads: 4
+# #     resources:
+# #         mem_mb=80000,
+# #         runtime=240,
+# #     log:
+# #         os.path.join(config["local_log"],"modify_transcriptome_chr_specific_files_{chromosome}_{strand}.log"),
+# #     shell:
+# #         """(set +o pipefail; mkdir -p {params.outdir}; \
+# #         seqkit replace -p {params.chromosome} -r {params.chromosome}_{params.strand} {input.fasta_concatenated_transcriptome_chr_specific} > {output.fasta_concatenated_transcriptome_chr_specific_modified} && \
+# #         awk -F'\\t' -v OFS='\\t' '{{ $1 = gensub(/{params.chromosome}/, "{params.chromosome}_{params.strand}", "g", $1); print }}' {input.gtf_concatenated_transcriptome_chr_specific} > {output.gtf_concatenated_transcriptome_chr_specific_modified}; \
+# #         ) \
+# #         &> {log}"""
+
+# rule merge_transcriptome_from_chr_specific_files:
+#     """
+#         merging chromosome-specific files;
+#         sanitize oringinal contig sequences to allow their mapping
+#     """
+#     input:
+#         fasta_concatenated_transcriptome_chr_specific = expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "concatenated_transcriptome.{chromosome}.{strand}.fasta"),
+#                         chromosome = config["chromosomes"].split(" "), strand = ['+','-']),
+#         gtf_concatenated_transcriptome_chr_specific = expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "concatenated_transcriptome.{chromosome}.{strand}.gtf"),
+#                         chromosome = config["chromosomes"].split(" "), strand = ['+','-']),
+#         transcript_contigs = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.fasta.gz"),
+#     output:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "concatenated_transcriptome.fasta"),
+#         gtf_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "concatenated_transcriptome.gtf"),
+#         sanitized_transcript_contigs = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.sanitized.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=80000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"merge_transcriptome_from_chr_specific_files.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         cat {input.fasta_concatenated_transcriptome_chr_specific} > {output.fasta_concatenated_transcriptome}; \
+#         cat {input.gtf_concatenated_transcriptome_chr_specific} > {output.gtf_concatenated_transcriptome}; \
+#         zcat {input.transcript_contigs} | seqkit seq -w 0 | pigz -p {threads} > {output.sanitized_transcript_contigs}; \
+#         ) \
+#         &> {log}"""
+
+# rule create_index_star_concatenated_transcriptome:
+#     """
+#         Create index for STAR alignments
+#     """
+#     input:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "concatenated_transcriptome.fasta"),
+#     output:
+#         chromosome_info=os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         chromosomes_names=os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_transcriptome",
+#             "STAR_index",
+#             "chrName.txt",
+#         ),
+#     params:
+#         output_dir=lambda wildcards, output: os.path.dirname(output.chromosome_info),
+#         outFileNamePrefix=os.path.join(
+#             config["output_dir"],"STAR_indices", config["organism"], "without_GTF_transcriptome", "STAR_index/STAR_"
+#         ),
+#         sjdbOverhang = 100
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=80000,
+#         runtime=800,
+#     log:
+#         os.path.join(config["local_log"],"create_index_star_concatenated_transcriptome.log"),
+#     shell:
+#         """(mkdir -p {params.output_dir}; \
+#         STAR \
+#         --runMode genomeGenerate \
+#         --genomeDir {params.output_dir} \
+#         --genomeFastaFiles {input.fasta_concatenated_transcriptome} \
+#         --runThreadN {threads} \
+#         --outFileNamePrefix {params.outFileNamePrefix} ) \
+#         &> {log}"""
+
+# rule map_individual_transcripts_onto_transcriptome_star:
+#     """
+#         Map to concatenated_transcriptome using STAR
+#         We are looking for transcripts that are fully embedded into other transcripts
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.sanitized.fasta.gz"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Aligned.sortedByCoord.out.bam",
+#         ),
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_individual_transcripts_onto_transcriptome_star.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType EndToEnd \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0 \
+#         --outFilterMatchNmin 5 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --alignIntronMax 1 \
+#         --outSAMunmapped Within \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000 \
+#         --limitOutSAMoneReadBytes 300000000) \
+#         &> {log}"""
+
+# rule samtools_index_self_mapped_transcriptome:
+#     """
+#         index bam files
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Aligned.sortedByCoord.out.bam",
+#         ),
+#     output:
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"samtools_index_self_mapped_transcriptome.log")
+#     shell:
+#         """(samtools index -@ {threads} \
+#         {input.bam}; ) &> {log}"""
+
+# ###
+# # now, leave only "unique mappers" our of self-aligned reads. Thus, all the embedded
+# ###
+
+# rule select_final_transcriptome_seqs:
+#     """
+#         leave only unique mappers and remove mappings on "-" strand
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#     output:
+#         filtered_transcriptome_seqs=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.uniquely_mapped.fasta.gz",
+#         ),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"select_final_transcriptome_seqs.log")
+#     shell:
+#         """(samtools view -q 255 -F 0x10 -@ {threads} {input.bam} -u | \
+#         samtools sort -n -@ {threads} -u | samtools fasta -@ {threads} | \
+#         pigz --fast -p {threads} -c -f > {output.filtered_transcriptome_seqs}) &> {log}"""
+
+# rule split_collapsed_reads_across_samples_2nd_pass:
+#     """
+#         split by chromosomes, 2nd pass
+#     """
+#     input:
+#         fasta_gz=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.uniquely_mapped.fasta.gz",
+#         ),
+#     output:
+#         fasta_gz_chr=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "self_mapping.uniquely_mapped.{chromosome}.{strand}.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "split_by_chromosome"),
+#         chromosome = "{chromosome}",
+#         strand = "{strand}"
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"split_collapsed_reads_across_samples_2nd_pass_{chromosome}_{strand}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         zcat {input.fasta_gz} | seqkit grep -n -i -r -p "{params.chromosome}:.*\\(\\{params.strand}\\)" | \
+#         pigz --fast -p {threads} -c -f > {output.fasta_gz_chr}) \
+#         &> {log}"""
+
+# rule concatenate_collapsed_sequences_2nd_pass:
+#     """
+#         concatenate fasta records belonging to the same chromosome and strand
+#     """
+#     input:
+#         fasta_gz_Deduplicated=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "self_mapping.uniquely_mapped.{chromosome}.{strand}.fasta.gz"),
+#         script=os.path.join(workflow.basedir, "scripts", "concatenate_collapsed_sequences.py"),
+#     output:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "final_concatenated_transcriptome.{chromosome}.{strand}.fasta"),
+#         gtf_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "final_concatenated_transcriptome.{chromosome}.{strand}.gtf"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "split_by_chromosome"),
+#         gap_sequence_length=20,
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"concatenate_collapsed_sequences_2nd_pass_{chromosome}_{strand}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --input_fasta {input.fasta_gz_Deduplicated} \
+#         --output_fasta {output.fasta_concatenated_transcriptome} \
+#         --output_gtf {output.gtf_concatenated_transcriptome} \
+#         --gap_sequence_length {params.gap_sequence_length} \
+#         --include_strand_label_into_chromosome_name Y) \
+#         &> {log}"""
+
+# rule merge_transcriptome_from_chr_specific_files_2nd_pass:
+#     """
+#         merging chromosome-specific files
+#     """
+#     input:
+#         fasta_concatenated_transcriptome_chr_specific = expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "final_concatenated_transcriptome.{chromosome}.{strand}.fasta"),
+#                         chromosome = config["chromosomes"].split(" "), strand = ['+','-']),
+#         gtf_concatenated_transcriptome_chr_specific = expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "split_by_chromosome",
+#                         "final_concatenated_transcriptome.{chromosome}.{strand}.gtf"),
+#                         chromosome = config["chromosomes"].split(" "), strand = ['+','-']),
+#     output:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.fasta"),
+#         fasta_fai_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.fasta.fai"),
+#         gtf_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.gtf"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=80000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"merge_transcriptome_from_chr_specific_files_2nd_pass.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         cat {input.fasta_concatenated_transcriptome_chr_specific} > {output.fasta_concatenated_transcriptome}; \
+#         cat {input.gtf_concatenated_transcriptome_chr_specific} > {output.gtf_concatenated_transcriptome}; \
+#         samtools faidx -@ {threads} {output.fasta_concatenated_transcriptome}; \
+#         ) \
+#         &> {log}"""
+
+# rule modify_transcriptome_gtf:
+#     """
+#         modify the final concatenated transcriptome GTF, to link elements to genomic annotation
+#     """
+#     input:
+#         compiled_genome_gtf = config["gtf_file"],
+#         gtf_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.gtf"),
+#         dupl_details=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.duplicated_seqs.details.txt"),
+#         script=os.path.join(workflow.basedir, "scripts", "make_GTF_with_linked_genomic_annotation.py"),
+#     output:
+#         modified_gtf_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.modified.gtf"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         temp_dir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "temp"),
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"modify_transcriptome_gtf.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir} {params.temp_dir}; \
+#         python3 {input.script} \
+#         --original_gtf_path {input.compiled_genome_gtf} \
+#         --transcriptome_gtf_path {input.gtf_transcriptome} \
+#         --dupl_details_path {input.dupl_details} \
+#         --out_gtf_path {output.modified_gtf_transcriptome} \
+#         --temp_dir {params.temp_dir}) \
+#         &> {log}"""
+
+# rule create_index_star_concatenated_transcriptome_2nd_pass:
+#     """
+#         Create index for STAR alignments
+#     """
+#     input:
+#         fasta_concatenated_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.fasta"),
+#     output:
+#         chromosome_info=os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         chromosomes_names=os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrName.txt",
+#         ),
+#     params:
+#         output_dir=lambda wildcards, output: os.path.dirname(output.chromosome_info),
+#         outFileNamePrefix=os.path.join(
+#             config["output_dir"],"STAR_indices", config["organism"], "without_GTF_final_transcriptome", "STAR_index/STAR_"
+#         ),
+#         sjdbOverhang = 100
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=80000,
+#         runtime=800,
+#     log:
+#         os.path.join(config["local_log"],"create_index_star_concatenated_transcriptome_2nd_pass.log"),
+#     shell:
+#         """(mkdir -p {params.output_dir}; \
+#         STAR \
+#         --runMode genomeGenerate \
+#         --genomeDir {params.output_dir} \
+#         --genomeFastaFiles {input.fasta_concatenated_transcriptome} \
+#         --runThreadN {threads} \
+#         --outFileNamePrefix {params.outFileNamePrefix} ) \
+#         &> {log}"""
+
+
+# rule map_individual_transcripts_onto_transcriptome_star_2pass:
+#     """
+#         Map to final concatenated_transcriptome using STAR
+#         To double-check that reads themselves can be mapped here;
+#         same parameters as for read mapping
+
+#         ! Here, we need to allow de novo split read alignment
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.sanitized.fasta.gz"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_individual_transcripts_onto_transcriptome_star_2pass.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType Local \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0.3 \
+#         --outFilterMatchNmin 15 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --alignIntronMax 1 \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000; \
+#         samtools index -@ {threads} {output.bam}) \
+#         &> {log}"""
+
+# rule map_individual_transcripts_onto_transcriptome_star_2pass_strict:
+#     """
+#         Map to final concatenated_transcriptome using STAR
+#         To double-check that reads themselves can be mapped here
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.sanitized.fasta.gz"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_individual_transcripts_onto_transcriptome_star_2pass_strict.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType Local \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0.01 \
+#         --outFilterMatchNmin 15 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --alignIntronMax 1 \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000; \
+#         samtools index -@ {threads} {output.bam}) \
+#         &> {log}"""
+
+# rule map_individual_transcripts_onto_transcriptome_star_2pass_strict_FL:
+#     """
+#         Map to final concatenated_transcriptome using STAR
+#         To double-check that reads themselves can be mapped here
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "collapsed_across_samples.deduplicated.sanitized.fasta.gz"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL.Aligned.sortedByCoord.out.bam.bai",
+#         ),        
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_individual_transcripts_onto_transcriptome_star_2pass_strict_FL.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType EndToEnd \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0.01 \
+#         --outFilterMatchNmin 15 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --alignIntronMax 1 \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000; \
+#         samtools index -@ {threads} {output.bam}) \
+#         &> {log}"""
+
+# rule map_individual_transcripts_onto_transcriptome_star_2pass_strict_FL_from_filtered:
+#     """
+#         Map ONLY final selected transcripts onto themselves, should give exclusively unique alignments
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping.uniquely_mapped.fasta.gz",
+#         ),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL_from_filtered.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL_from_filtered.Aligned.sortedByCoord.out.bam.bai",
+#         ),        
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "self_mapping_2pass_strict_FL_from_filtered.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_individual_transcripts_onto_transcriptome_star_2pass_strict_FL_from_filtered.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType EndToEnd \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0.01 \
+#         --outFilterMatchNmin 15 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --alignIntronMax 1 \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000; \
+#         samtools index -@ {threads} {output.bam}) \
+#         &> {log}"""
+
+
+# rule samtools_sample_bam_to_fastq:
+#     """
+#         convert bam to fastq files, to re-align them
+#     """
+#     input:
+#         filtered_bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.no_secondary.bam",
+#         ),
+#     output:
+#         filtered_fastq=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.no_secondary.fastq.gz",
+#         ),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=40000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"samtools_sample_bam_to_fastq_{sample}.log")
+#     shell:
+#         """(samtools sort -n -@ {threads} -u {input.filtered_bam} | samtools fastq -@ {threads} | seqkit rmdup -n -o {output.filtered_fastq}) &> {log}"""
+
+# rule map_concatenated_transcriptome_star:
+#     """
+#         Map to concatenated_transcriptome using STAR
+#         Note the mapping parameters are different from initial mapping;
+#         allow split read alignment
+#     """
+#     input:
+#         chromosome_info = os.path.join(
+#             config["output_dir"],
+#             "STAR_indices",
+#             config["organism"],
+#             "without_GTF_final_transcriptome",
+#             "STAR_index",
+#             "chrNameLength.txt",
+#         ),
+#         reads=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.no_secondary.fastq.gz",
+#         ),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.bam",
+#         ),
+#         log_final_file=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Log.final.out",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#         STAR_index_dir = lambda wildcards, input: os.path.dirname(input.chromosome_info),
+#         outFileNamePrefix=lambda wildcards, output: output.bam.replace(
+#             "Aligned.sortedByCoord.out.bam", ""
+#         ),       
+#     conda:
+#         "envs/STAR.yaml"
+#     threads: 16
+#     resources:
+#         mem_mb=90000,
+#         runtime=600,
+#     log:
+#         os.path.join(config["local_log"],"map_concatenated_transcriptome_star__{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         STAR \
+#         --runMode alignReads \
+#         --alignEndsType Local \
+#         --runThreadN {threads} \
+#         --genomeDir {params.STAR_index_dir} \
+#         --readFilesIn {input.reads} \
+#         --readFilesCommand zcat \
+#         --outFileNamePrefix {params.outFileNamePrefix} \
+#         --genomeLoad NoSharedMemory \
+#         --outSAMtype BAM SortedByCoordinate \
+#         --outFilterType BySJout \
+#         --outFilterMismatchNoverLmax 0.3 \
+#         --outFilterMatchNmin 15 \
+#         --outFilterScoreMinOverLread 0  \
+#         --outFilterMatchNminOverLread 0 \
+#         --twopassMode None \
+#         --outBAMsortingThreadN {threads} \
+#         --alignTranscriptsPerReadNmax 50000 \
+#         --winAnchorMultimapNmax 50000 \
+#         --outFilterMultimapNmax 50000 \
+#         --outSAMprimaryFlag AllBestScore \
+#         --outSAMattributes NH HI AS nM MD \
+#         --limitOutSJcollapsed 5000000 \
+#         --limitBAMsortRAM 15000000000) \
+#         &> {log}"""
+
+# rule samtools_index_transcriptome_mapped:
+#     """
+#         index bam files
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.bam",
+#         ),
+#     output:
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"samtools_index_transcriptome_mapped_{sample}.log")
+#     shell:
+#         """(samtools index -@ {threads} \
+#         {input.bam}; ) &> {log}"""
+
+# rule transcriptome_gtf_to_genes_bed:
+#     """
+#         convert gtf to bed file, necessary for next rule
+#     """
+#     input:
+#         gtf=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.gtf"),
+#         script=os.path.join(workflow.basedir, "scripts", "extract_genes_bed_from_gtf.py"),
+#     output:
+#         bed_genes_transcriptome = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.genes.bed"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"transcriptome_gtf_to_genes_bed.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --input_gtf_file {input.gtf} \
+#         --out_bed_file {output.bed_genes_transcriptome}) \
+#         &> {log}"""
+
+# rule remove_antisense_transcriptome_mappings:
+#     """
+#         remove mappings on "-" strand and secondary alignments
+#         retain alignments fully overlapping with annotation
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.bam",
+#         ),
+#         bai=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.bam.bai",
+#         ),
+#         bed_genes_transcriptome = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.genes.bed"),
+#         genome_fasta = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.fasta"),
+#         genome_fai=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.fasta.fai"),
+#     output:
+#         bam_filtered=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.filtered.bam",
+#         )
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"remove_antisense_transcriptome_mappings_{sample}.log")
+#     shell:
+#         """(set +o pipefail; \
+#         samtools view -F 0x110 -@ {threads} -u {input.bam} | \
+#         bedtools intersect -s -f 1 -ubam -abam stdin -b {input.bed_genes_transcriptome} | \
+#         samtools sort -n -@ {threads} -o {output.bam_filtered}) &> {log}"""
+
+# rule redefine_NH_tags_and_quality_values:
+#     """
+#         redefine NH tags and, accordingly, quality values of the filtered reads
+#         because after filtering, some reads may become unique, or number of MMs decreases
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.filtered.bam"
+#         ),
+#         script=os.path.join(workflow.basedir, "scripts", "redefine_qual_and_NHtag.py"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.filtered.redefined.bam",
+#         )
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"redefine_NH_tags_and_quality_values_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --input_bam_file {input.bam} \
+#         --out_bam_file {output.bam}) \
+#         &> {log}"""
+
+# rule merge_technical_replicates_transcriptome_mappings:
+#     """
+#         merge technical replicates; not that input files were sorted by name (-n)
+#     """
+#     input:
+#         bam=lambda wildcards: expand(os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome",
+#             "{sample}.Aligned.sortedByCoord.out.filtered.redefined.bam",
+#         ),
+#         sample = list(samples.loc[samples['merged_sample']==wildcards.merged_sample]['sample'])),
+#     output:
+#         merged_bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#     params:
+#         merged_nonsorted_bam = os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.nonsorted.bam"),
+#         merged_sample = "{merged_sample}",
+#         outdir = os.path.join(
+#            config["output_dir"],
+#                         "map_transcriptome_merged"),
+#         merged_bai=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam.bai"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 8
+#     log:
+#         os.path.join(config["local_log"],"merge_technical_replicates_transcriptome_mappings_{merged_sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         k=0; for i in {input.bam}; do k=$(( $k+1 )); done; \
+#         if [[ $k > 1 ]]; then \
+#         samtools merge -n {params.merged_nonsorted_bam} {input.bam} -f -@ {threads}; \
+#         samtools sort -@ {threads} {params.merged_nonsorted_bam} > {output.merged_bam}; \
+#         samtools index -@ {threads} {output.merged_bam}; \
+#         rm {params.merged_nonsorted_bam}; \
+#         else \
+#         rm -f {output.merged_bam} && ln -f -s {input.bam} {output.merged_bam}; \
+#         rm -f {params.merged_bai} && ln -f -s {input.bam}.bai {params.merged_bai}; \
+#         fi; \
+#         ) &> {log}"""
+
+# rule FeatureCounts_transcriptome_mappings:
+#     """
+#         quantify expression of each defined transcript, using both uniquely mapped and MM reads
+#         This will define weights for selecting SINGLE mapping for every MM read
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#         gtf=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.gtf"),
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_transcriptome_mappings",
+#             "{merged_sample}.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_transcriptome_mappings"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_transcriptome_mappings_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -M -O --fraction -s 1 -T {threads} -t exon -g gene_id \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}; \
+#         ) &> {log}"""
+
+# rule intersect_reads_with_transcripts:
+#     """
+#         use bedtools intersect
+#         output sorted by read_names
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#         bed_genes_transcriptome = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.genes.bed"),
+#     output:
+#         read_intersection=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.read_intersection.tsv",
+#         )
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=300,
+#     log:
+#         os.path.join(config["local_log"],"intersect_reads_with_transcripts_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; \
+#         samtools view -@ {threads} -u {input.bam} | \
+#         bedtools intersect -s -f 1 -bed -wa -wb -abam stdin -b {input.bed_genes_transcriptome} | \
+#         cut -f1,2,3,4,6,16 | sort -k 4,4 > {output.read_intersection}) &> {log}"""
+
+# rule sort_transcriptome_mappings_by_name:
+#     """
+#         sort lexicographically the reads, for efficient processing downstream
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#     output:
+#         bam_sorted=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.NAME_sorted.bam"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"sort_transcriptome_mappings_by_name_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; \
+#         samtools view --with-header -@ {threads} -u {input.bam} | \
+#         samtools sort -N -@ {threads} -o {output.bam_sorted}) &> {log}"""
+
+# rule get_unique_almnts_for_MM_reads_by_TPM_prop:
+#     """
+#         retain randomly only one aligment for MM reads, based on TPM of loci
+#     """
+#     input:
+#         bam=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.NAME_sorted.bam"),
+#         FC_file = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_transcriptome_mappings",
+#             "{merged_sample}.txt"),
+#         read_intersection_file = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.read_intersection.tsv"),
+#         script=os.path.join(workflow.basedir, "scripts", "get_unique_almnts_for_MM_reads_by_TPM_prop.py"),
+#     output:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.NAME_sorted.MM_unique.bam",
+#         )
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome"),
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 8
+#     resources:
+#         mem_mb=80000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"get_unique_almnts_for_MM_reads_by_TPM_prop_{merged_sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --FC_file {input.FC_file} \
+#         --read_intersection_file {input.read_intersection_file} \
+#         --input_bam_file {input.bam} \
+#         --out_bam_file {output.bam}) \
+#         &> {log}"""
+
+# rule sort_MM_unique_transcriptome_mappings_by_coordinate:
+#     """
+#         sort lexicographically the reads, for efficient processing downstream
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.NAME_sorted.MM_unique.bam",
+#         )
+#     output:
+#         bam_sorted=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.COORD_SORTED.MM_unique.bam",
+#         )
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"sort_final_transcriptome_mappings_by_coordinate_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; \
+#         samtools view --with-header -@ {threads} -u {input.bam} | \
+#         samtools sort -@ {threads} -o {output.bam_sorted} && \
+#         samtools index -@ {threads} {output.bam_sorted}) &> {log}"""
+
+# rule FeatureCounts_MM_unique_transcriptome_mappings:
+#     """
+#         to double-check
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.COORD_SORTED.MM_unique.bam",
+#         ),
+#         gtf=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.gtf"),
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_MM_unique_transcriptome_mappings",
+#             "{merged_sample}.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_MM_unique_transcriptome_mappings"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_MM_unique_transcriptome_mappings_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -O --fraction -s 1 -T {threads} -t exon -g gene_id \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}; \
+#         ) &> {log}"""
+
+# ### Final transcriptome quantifications
+
+# rule FeatureCounts_final_transcriptome_mappings_gene_counts:
+#     """
+#         Quantify expression of genes using modified GTF with links to genomic loci
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.COORD_SORTED.MM_unique.bam",
+#         ),
+#         gtf=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.modified.gtf"),
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_final_transcriptome_mappings_gene_counts",
+#             "{merged_sample}.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_final_transcriptome_mappings_gene_counts"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_final_transcriptome_mappings_gene_counts_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -O --fraction -s 1 -T {threads} -t gene -g gene_name \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}; \
+#         ) &> {log}"""
+
+# rule FeatureCounts_final_transcriptome_mappings_gene_type_counts:
+#     """
+#         Quantify expression of genes using modified GTF with links to genomic loci
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.COORD_SORTED.MM_unique.bam",
+#         ),
+#         gtf=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "final_concatenated_transcriptome.modified.gtf"),
+#     output:
+#         out_gene_fragments_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_final_transcriptome_mappings_gene_type_counts",
+#             "{merged_sample}.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_final_transcriptome_mappings_gene_type_counts"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_final_transcriptome_mappings_gene_type_counts_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -O --fraction -s 1 -T {threads} -t gene -g gene_type \
+#         -a {input.gtf} -o {output.out_gene_fragments_txt} {input.bam}; \
+#         ) &> {log}"""
+
+# #########
+# # Transform reads back to genomic coordinates, for easy exploration
+
+
+
+
+# #########
+
+
+
+# #########
+# ### check that multi-mapped reads indeed mapped to the same genomic sequence repeatedly present in the genome
+# #########
+
+# rule extract_fasta_from_merged_bed:
+#     """
+#         bedtools getfasta
+#     """
+#     input:
+#         bed = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.merged.sorted.bed"),
+#         genome=config["genome_file"],
+#         genome_fai = config["genome_file"]+'.fai'
+#     output:
+#         fasta_gz_MM_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.fasta.gz"),
+#         fasta_gz_UM_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.UM_reads.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         fasta_MM_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.fasta"),
+#         fasta_UM_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.UM_reads.fasta"),
+#     conda:
+#         "envs/bedtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=40000,
+#         runtime=1200,
+#     log:
+#         os.path.join(config["local_log"],"extract_fasta_from_merged_bed_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         bedtools getfasta -s -name -fi {input.genome} -bed <(awk -F'\t' '$5 < 255' {input.bed}) > {params.fasta_MM_reads} && \
+#         pigz --fast -p {threads} {params.fasta_MM_reads}; \
+#         bedtools getfasta -s -name -fi {input.genome} -bed <(awk -F'\t' '$5 == 255' {input.bed}) > {params.fasta_UM_reads} && \
+#         pigz --fast -p {threads} {params.fasta_UM_reads};) \
+#         &> {log}"""
+
+# rule find_duplicated_seqs:
+#     """
+#         seqkit
+#     """
+#     input:
+#         fasta_gz_MM_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.fasta.gz"),
+#     output:
+#         MM_details=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.detail.txt"),
+#         fasta_gz_MM_Deduplicated_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.clean.fasta.gz"),
+#         fasta_gz_MM_duplicated_reads=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.duplicated.fasta.gz"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=100000,
+#         runtime=540,
+#     log:
+#         os.path.join(config["local_log"],"find_duplicated_seqs_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         zcat {input.fasta_gz_MM_reads} | seqkit rmdup -s -i -o {output.fasta_gz_MM_Deduplicated_reads} -d {output.fasta_gz_MM_duplicated_reads} -D {output.MM_details}) \
+#         &> {log}"""
+
+# rule split_rmdup_output_into_chunks:
+#     """
+#         split into chunks of approximately equal size
+#     """
+#     input:
+#         MM_details=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_reads.detail.txt"),
+#     output:
+#         success_flag = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "by_chunks",
+#             "{sample}.success"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "by_chunks"),
+#         chunk_number = 30,
+#         MM_details_true_output=expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "by_chunks",
+#                         "{{sample}}.MM_reads.detail.{chunk}"),
+#                          chunk = [('0'+str(val) if len(str(val))==1 else str(val)) for val in list(range(0,30))]
+#                          ),
+#         out_prefix = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "by_chunks",
+#             "{sample}.MM_reads.detail."),
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=20000,
+#         runtime=29,
+#     log:
+#         os.path.join(config["local_log"],"split_rmdup_output_into_chunks_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         rm -f {output.success_flag}; \
+#         split -d --number=l/{params.chunk_number} {input.MM_details} {params.out_prefix} && \
+#         echo "success" > {output.success_flag} && \
+#         (for i in {params.MM_details_true_output}; do \
+#         if [ -f $i ]; then echo "exists"; else rm -f {output.success_flag}; fi; \
+#         done)) \
+#         &> {log}"""
+
+# rule get_stats_on_MMread_genomic_sequences:
+#     """
+#         Counting how many of the multimapped alignments are actually mapped to repeated genomic sequences
+#     """
+#     input:
+#         success_flag = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "by_chunks",
+#             "{sample}.success"),
+#         script=os.path.join(workflow.basedir, "scripts", "get_stats_on_MMread_genomic_sequences.py"),
+#     output:
+#         out_stats_tsv=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "by_chunks",
+#                         "{sample}.MM_stats.{chunk}.tsv"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "by_chunks"),
+#         MM_details_chunk=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "by_chunks",
+#                         "{sample}.MM_reads.detail.{chunk}"),
+#         pandas_readcsv_chunksize=100,
+#         additional_file_id = "{chunk}",
+#     conda:
+#         "envs/seqio.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=40000,
+#         runtime=350,
+#     log:
+#         os.path.join(config["local_log"],"get_stats_on_MMread_genomic_sequences_{sample}_{chunk}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         python3 {input.script} \
+#         --input_detail_file {params.MM_details_chunk} \
+#         --output_tsv {output.out_stats_tsv} \
+#         --additional_file_id {params.additional_file_id} \
+#         --chunksize {params.pandas_readcsv_chunksize}) \
+#         &> {log}"""
+
+# rule merge_chunked_stats_on_MM_genomic_sequences:
+#     """
+#         merge chunks back
+#     """
+#     input:
+#         out_stats_tsv=expand(os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "by_chunks",
+#                         "{{sample}}.MM_stats.{chunk}.tsv"),
+#                         chunk = [('0'+str(val) if len(str(val))==1 else str(val)) for val in list(range(0,30))]
+#                         )
+#     output:
+#         out_stats_tsv_merged=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.MM_stats.tsv"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=20000,
+#         runtime=29,
+#     log:
+#         os.path.join(config["local_log"],"merge_chunked_stats_on_MM_genomic_sequences_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         cat {input.out_stats_tsv} > {output.out_stats_tsv_merged}) \
+#         &> {log}"""
+
+# rule groupby_merged_bed:
+#     """
+#         bedtools groupby for multi-mapped reads
+#     """
+#     input:
+#         bed = os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.merged.sorted.bed"),
+#     output:
+#         groupby_bed=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.groupby.bed"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#     conda:
+#         "envs/bedtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=40000,
+#         runtime=240,
+#     log:
+#         os.path.join(config["local_log"],"groupby_merged_bed_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         awk -F'\t' '$5 < 255' {input.bed} | sort -k 4,4 | bedtools groupby -g 4 -c 1 -o count > {output.groupby_bed};) \
+#         &> {log}"""
+
+# ###
+# # checking the properties of alignments on different stages
+# ###
+
+# rule count_UM_MM_reads_from_different_mapping_steps:
+#     """
+#         Count the abundance of UM/MM reads on different steps of mapping
+#         write to the ouput text file, line after line
+#     """
+#     input:
+#         bam_genome=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#         bam_transcriptome=os.path.join(
+#                         config["output_dir"],
+#                         "map_transcriptome_merged",
+#                         "{merged_sample}.merged.sorted.bam"),
+#         bam_transcriptome_MM_unique=os.path.join(
+#             config["output_dir"],
+#             "map_transcriptome_merged",
+#             "{merged_sample}.merged.COORD_SORTED.MM_unique.bam",
+#         )
+
+#     output:
+#         mapping_stats=os.path.join(
+#             config["output_dir"],
+#             "mapping_stats",
+#             "{merged_sample}.mapping_stats.txt",
+#         ),
+#         success_flag=os.path.join(
+#             config["output_dir"],
+#             "mapping_stats",
+#             "{merged_sample}.success",
+#         ),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "mapping_stats"),
+#     conda:
+#         "envs/samtools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"count_UM_MM_reads_from_different_mapping_steps_{merged_sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         rm -f {output.success_flag}; \
+#         echo '>number of UM reads; genomic mapping' > {output.mapping_stats}; \
+#         samtools view -@ {threads} -q 255 {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo '>total number of reads; genomic mapping' >> {output.mapping_stats}; \
+#         samtools view -@ {threads} {input.bam_genome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo '>number of UM reads; transcriptome mapping' >> {output.mapping_stats}; \
+#         samtools view -@ {threads} -q 255 {input.bam_transcriptome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo '>total number of reads; transcriptome mapping' >> {output.mapping_stats}; \
+#         samtools view -@ {threads} {input.bam_transcriptome} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo '>number of UM reads; transcriptome mapping, MM-unique' >> {output.mapping_stats}; \
+#         samtools view -@ {threads} -q 255 {input.bam_transcriptome_MM_unique} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo '>total number of reads; transcriptome mapping, MM-unique' >> {output.mapping_stats}; \
+#         samtools view -@ {threads} {input.bam_transcriptome_MM_unique} | cut -f1 | sort | uniq | wc -l >> {output.mapping_stats}; \
+#         echo 'success' > {output.success_flag}; \
+#         ) &> {log}"""
+
+# ###
+# # checking the expected properties of reads in Takara kit, based on template switching
+# ###
+
+# rule count_prefix_kmers_in_reads:
+#     """
+#         We check that prefixes of input reads are enriched with GGG, expected for Takara kit
+#     """
+#     input:
+#         input_reads_R1=lambda wildcards: samples.loc[wildcards.sample, "fq1"],
+#         trimmed_reads_R1 = os.path.join(
+#                     config["output_dir"],
+#                     "fastq",
+#                     "1.trimmed_adapters",            
+#                     "{sample}.R1.fastq.gz"),
+#         no_polya_fastq_R1 = os.path.join(
+#                     config["output_dir"],
+#                     "fastq",
+#                     "2.no_polyA",
+#                     "{sample}.R1.fastq.gz"),
+#         mapped_filtered_fastq=os.path.join(
+#             config["output_dir"],
+#             "map_genome",
+#             "{sample}.Aligned.sortedByCoord.out.no_secondary.fastq.gz",
+#         ),
+        
+#     output:
+#         read_stats=os.path.join(
+#             config["output_dir"],
+#             "read_stats",
+#             "{sample}.read_stats.txt",
+#         )
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "read_stats"),
+#         prefix_length = 5,
+#     conda:
+#         "envs/seqkit_282.yaml"
+#     threads: 4
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"count_prefix_kmers_in_reads_{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         echo '>input reads R1' > {output.read_stats}; \
+#         zcat {input.input_reads_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+#         echo '>adapter trimmed reads R1' >> {output.read_stats}; \
+#         zcat {input.trimmed_reads_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+#         echo '>polyA-trimmed + removed first 3 nt' >> {output.read_stats}; \
+#         zcat {input.no_polya_fastq_R1} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+#         echo '>well-mapped genomic reads' >> {output.read_stats}; \
+#         zcat {input.mapped_filtered_fastq} | seqkit subseq -r 1:{params.prefix_length} | seqkit seq -s | sort | uniq -c | sort -k 1,1 >> {output.read_stats}; \
+#         ) &> {log}"""
+
+# ###
+# # Drafts
+# ###
+
+# rule convert_bed_to_gtf:
+#     """
+#         use Kent toolset 
+#     """
+#     input:
+#         bed_collaped_All=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.All.bed"),
+#     output:
+#         gtf_collapsed=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.All.gtf"),
+#     params:
+#         outdir = os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged"),
+#         genepred_merged=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.merged.genepred"),
+#         gtf_temp=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.merged.temp.gtf"),
+#     conda:
+#         "envs/kent_tools_latest.yaml"
+#     threads: 12
+#     resources:
+#         mem_mb=10000,
+#         runtime=30,
+#     log:
+#         os.path.join(config["local_log"],"convert_bed_to_gtf_{sample}.log"),
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         bedToGenePred {input.bed_collaped_All} {params.genepred_merged} && \
+#         genePredToGtf -source=T file {params.genepred_merged} {params.gtf_temp} && \
+#         awk -F'\t' '$3 == "transcript"' {params.gtf_temp} > {output.gtf_collapsed} && \
+#         rm -f {params.genepred_merged} {params.gtf_temp}) \
+#         &> {log}"""
+
+# rule FeatureCounts_expressed_segments:
+#     """
+#         quantify how many uniquely mapped reads support each expressed segment
+#     """
+#     input:
+#         bam=os.path.join(
+#             config["output_dir"],
+#             "map_genome_merged",
+#             "{sample}.merged.sorted.bam",
+#         ),
+#         gtf_collapsed=os.path.join(
+#                         config["output_dir"],
+#                         "map_genome_merged",
+#                         "{sample}.collapsed.All.gtf"),
+#     output:
+#         out_gene_fragments_UM_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_expressed_segments",
+#             "{sample}.UM.txt"),
+#         out_gene_fragments_MM_txt = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_expressed_segments",
+#             "{sample}.MM.txt"),
+#     params:
+#         outdir = os.path.join(
+#             config['output_dir'], 
+#             "gene_expression_quantification", 
+#             "FeatureCounts_expressed_segments"),
+#     conda:
+#         "envs/FeatureCounts.yaml"
+#     threads:8
+#     resources:
+#         mem_mb=20000,
+#         runtime=60,
+#     log:
+#         os.path.join(config["local_log"],"FeatureCounts_expressed_segments_{sample}.log")
+#     shell:
+#         """(set +o pipefail; mkdir -p {params.outdir}; \
+#         featureCounts -O --fraction -s 1 -T {threads} -t transcript -g gene_id \
+#         -a {input.gtf_collapsed} -o {output.out_gene_fragments_UM_txt} {input.bam}; \
+#         featureCounts -M -O --fraction -s 1 -T {threads} -t transcript -g gene_id \
+#         -a {input.gtf_collapsed} -o {output.out_gene_fragments_MM_txt} {input.bam}; \
+#         ) &> {log}"""

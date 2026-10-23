@@ -5,6 +5,12 @@
 		},
 		{
 			"path": "."
+		},
+		{
+			"path": "../../libs/Sanity_utils"
+		},
+		{
+			"path": "../../../GROUP/pbody_RNA_spang_zavolan_v2"
 		}
 	],
 	"settings": {}

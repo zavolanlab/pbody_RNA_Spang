@@ -1,0 +1,23 @@
+---
+  # Input (outputs of Snakefile-basic)
+  samples_file: "/path/to/wf_runs/<version>/start_samples.tsv"
+  featurecounts_dir: "/path/to/wf_runs/<version>/output/gene_expression_quantification/FeatureCounts_genomic_DefaultGTF/"
+  gtf_file: "/path/to/Saccharomyces_cerevisiae.R64-1-1.109.gtf"
+
+  # Output
+  output_dir: "/path/to/wf_runs/<version>/output/Sanity_utils/"
+  local_log: "/path/to/wf_runs/<version>/output/Sanity_utils/local_log/"
+  cluster_log: "/path/to/wf_runs/<version>/output/Sanity_utils/cluster_log/"
+  tables_dir: "/path/to/tables/gene_expression_analysis/bulkRNAseq/Sanity_utils/"
+  genesets_dir: "/path/to/external_data/genesets/"
+
+  # Software: conda env with Sanity_utils (https://github.com/nimwegenLab/Sanity_utils)
+  sanity_utils_python: "/path/to/envs/sanity_utils/bin/python"
+  sanity_utils_bin: "/path/to/envs/sanity_utils/bin"
+
+  # Replicate averaging of Sanity estimates: 'reml' (recommended for 3 replicates) or 'ml' (ISMARA)
+  averaging_method: "reml"
+
+  # Annotation for gene features (UTRs from TIF-seq, see the notebook section "Make custom annotations")
+  gtf_CDS_and_UTRs: "/path/to/wf_runs/v1/modified_annotation/CDS_and_UTRs.gtf"
+  genome_file: "/path/to/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa"
