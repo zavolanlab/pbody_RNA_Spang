@@ -57,3 +57,5 @@ work/
 .nextflow/
 .nextflow.log*
 results/
+# exported Claude Code sessions
+claude_session*

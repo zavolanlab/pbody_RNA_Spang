@@ -21,3 +21,20 @@
   # Annotation for gene features (UTRs from TIF-seq, see the notebook section "Make custom annotations")
   gtf_CDS_and_UTRs: "/path/to/wf_runs/v1/modified_annotation/CDS_and_UTRs.gtf"
   genome_file: "/path/to/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa"
+
+  # Gene universe: 'protein_coding' (nuclear protein-coding genes) or 'all' (all expressed genes, as in pySanity)
+  gene_universe: "all"
+  # Length correction: true -> log2 TPM, false -> log2 CPM
+  length_correction: true
+
+  # Structure: DMS-seq bedGraphs lifted to R64 (structure_features.py lift); optional caps of the UTRs (nt from
+  # the CDS) because the DMS signal of the log-phase samples is concentrated near start and stop codons
+  dms_dir: "/path/to/external_data/Rouskin2014_DMSseq/lifted_R64"
+  structure_max_5utr_nt: 120
+  structure_max_3utr_nt: 150
+  # Motifs: yeast RBP PWMs (MEME format, DNA-encoded), FIMO binary, k-mer sizes, transform of the counts
+  motif_meme: ["/path/to/external_data/motifs/meme_motif_databases.12.25/motif_databases/CISBP-RNA/Saccharomyces_cerevisiae.dna_encoded.meme",
+               "/path/to/external_data/motifs/meme_motif_databases.12.25/motif_databases/RNA/Ray2013_rbp_Saccharomyces_cerevisiae.dna_encoded.meme"]
+  fimo_bin: "/scicore/soft/easybuild/apps/MEME/5.5.7-gompi-2023b/bin/fimo"
+  kmer_k: [6]
+  motif_transform: "count"

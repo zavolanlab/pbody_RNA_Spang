@@ -1,5 +1,6 @@
 """
-Sanity (C++) normalisation of one fraction (Total or PD) with length correction (log2 TPM), and
+Sanity (C++) normalisation of one fraction (Total or PD) with length correction (log2 TPM; log2 CPM
+with --no-length-correction), and
 ISMARA replicate averages per cohort (time;condition).
 """
 
@@ -20,6 +21,7 @@ def main():
     p.add_argument("--threads", type=int, default=8)
     p.add_argument("--v-method", default="MAP")
     p.add_argument("--averaging-method", default="reml")
+    p.add_argument("--no-length-correction", action="store_true")
     a = p.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
 
@@ -30,7 +32,7 @@ def main():
     sub = counts[meta_f["sample"].tolist()]
     sub = sub.loc[sub.sum(axis=1) > 0]
 
-    res = su.sanity_normalization(sub, v_method=a.v_method, n_threads=a.threads, gene_lengths=lengths,
+    res = su.sanity_normalization(sub, v_method=a.v_method, n_threads=a.threads, gene_lengths=None if a.no_length_correction else lengths,
                                   output_dir=os.path.join(a.outdir, "sanity_run"), overwrite=True)
     avg = su.average_conditions(res, meta_f, sample_col="sample", cond_col="cohort", method=a.averaging_method)
 

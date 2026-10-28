@@ -1,0 +1,12 @@
+# rclone filter rules (first match wins): tables shared with collaborators via SWITCHdrive
++ fracSanity/*.tsv
++ gene_features/gene_features.tsv
++ gene_set_activities/differential_recruitment.tsv
++ gene_set_activities/gene_sets.tsv
++ normalized_expression/*.tsv
++ overlaps/*.tsv
++ enrichment/*.tsv
++ features/*.tsv
++ stress_specificity/*.tsv
++ translation/*.tsv
+- *

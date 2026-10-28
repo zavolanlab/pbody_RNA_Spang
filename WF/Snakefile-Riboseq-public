@@ -1,0 +1,149 @@
+import os
+import pandas as pd
+
+# Public yeast Ribo-seq / RNA-seq (poly(A)-tailing libraries, single-end) for translation efficiency (TE) under
+# stress: download from ENA, poly(A) trimming, unique STAR mapping, P-site calibration on start codons,
+# P-site bigWigs (IGV), CDS counts, and TE per condition and stress vs control with Sanity_utils fracSanity
+# (Ribo-seq in place of the pull-down, RNA-seq in place of Total).
+
+localrules: finish, download
+
+SCRIPTS = os.path.join(workflow.basedir, "scripts", "riboseq_public")
+OUT = config["output_dir"]
+B = config["bins"]
+PY = "export PYTHONNOUSERSITE=1 OMP_NUM_THREADS={threads}; cd " + SCRIPTS + "; " + config["sanity_utils_python"]
+
+samples = pd.read_csv(config["samples_file"], sep="\t", dtype=str).set_index("sample", drop=False)
+RIBO = samples.index[samples["assay"] == "Ribo"].tolist()
+RNA = samples.index[samples["assay"] == "RNA"].tolist()
+DATASETS = sorted(samples["dataset"].unique())
+
+
+rule finish:
+    input:
+        bw = expand(os.path.join(OUT, "psites", "{sample}.psites.plus.rpm.bw"), sample=RIBO),
+        te = expand(os.path.join(OUT, "te", "{dataset}", "te_differential.tsv"), dataset=DATASETS),
+
+
+rule download:
+    output:
+        fq = os.path.join(OUT, "fastq", "raw", "{sample}.fastq.gz"),
+    params:
+        url = lambda wc: samples.loc[wc.sample, "url"],
+    resources:
+        download=1,     # at most --resources download=N parallel downloads (EBI refuses many connections)
+    shell:
+        "curl -sS --retry 10 --retry-delay 30 --retry-connrefused -o {output.fq}.part {params.url} && mv {output.fq}.part {output.fq}"
+
+
+rule trim:
+    """
+        3' poly(A) of the tailing protocol; reads >= 20 nt
+    """
+    input:
+        fq = rules.download.output.fq,
+    output:
+        fq = os.path.join(OUT, "fastq", "trimmed", "{sample}.fastq.gz"),
+        report = os.path.join(OUT, "fastq", "trimmed", "{sample}.cutadapt.txt"),
+    threads: 4
+    resources:
+        mem_mb=4000,
+        runtime=60,
+        slurm_extra="'--qos=6hours'",
+    shell:
+        B + "/cutadapt -j {threads} -a 'A{{10}}' -m 20 -o {output.fq} {input.fq} > {output.report}"
+
+
+rule map:
+    """
+        unique, end-to-end STAR alignment to R64-1-1
+    """
+    input:
+        fq = rules.trim.output.fq,
+    output:
+        bam = os.path.join(OUT, "map", "{sample}.bam"),
+        bai = os.path.join(OUT, "map", "{sample}.bam.bai"),
+    params:
+        prefix = os.path.join(OUT, "map", "{sample}."),
+        index = config["star_index"],
+    threads: 8
+    resources:
+        mem_mb=16000,
+        runtime=120,
+        slurm_extra="'--qos=6hours'",
+    shell:
+        """{B}/STAR --runThreadN {threads} --genomeDir {params.index} --readFilesIn {input.fq} --readFilesCommand zcat \
+        --outSAMtype BAM SortedByCoordinate --outFilterMultimapNmax 1 --outFilterMismatchNmax 2 \
+        --alignEndsType EndToEnd --alignIntronMax 3000 --outSAMattributes NH NM --outFileNamePrefix {params.prefix} \
+        && mv {params.prefix}Aligned.sortedByCoord.out.bam {output.bam} && {B}/samtools index {output.bam}""".replace("{B}", B)
+
+
+rule psites:
+    input:
+        bam = rules.map.output.bam,
+    output:
+        counts = os.path.join(OUT, "psites", "{sample}.cds_counts.tsv"),
+        offsets = os.path.join(OUT, "psites", "{sample}.psite_offsets.tsv"),
+        bw_plus = os.path.join(OUT, "psites", "{sample}.psites.plus.rpm.bw"),
+        bw_minus = os.path.join(OUT, "psites", "{sample}.psites.minus.rpm.bw"),
+    params:
+        prefix = os.path.join(OUT, "psites", "{sample}"),
+    wildcard_constraints:
+        sample = "|".join(RIBO),
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=120,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(OUT, "logs", "psites.{sample}.log"),
+    shell:
+        PY + """ psites.py --bam {input.bam} --mode ribo --gtf {config[gtf_file]} --chrom-sizes {config[genome_fai]} \
+        --start-codons {config[start_codons_bed]} --lengths {config[ribo_lengths]} --out-prefix {params.prefix} &> {log}"""
+
+
+rule rna_counts:
+    input:
+        bam = rules.map.output.bam,
+    output:
+        counts = os.path.join(OUT, "psites", "{sample}.cds_counts.tsv"),
+    params:
+        prefix = os.path.join(OUT, "psites", "{sample}"),
+    wildcard_constraints:
+        sample = "|".join(RNA),
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=120,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(OUT, "logs", "rna_counts.{sample}.log"),
+    shell:
+        PY + """ psites.py --bam {input.bam} --mode rna --gtf {config[gtf_file]} --chrom-sizes {config[genome_fai]} \
+        --out-prefix {params.prefix} &> {log}"""
+
+
+rule te:
+    """
+        Sanity on Ribo and RNA, fracSanity per condition, stress vs control
+    """
+    input:
+        counts = lambda wc: expand(os.path.join(OUT, "psites", "{sample}.cds_counts.tsv"),
+                                   sample=samples.index[samples["dataset"] == wc.dataset]),
+    output:
+        diff = os.path.join(OUT, "te", "{dataset}", "te_differential.tsv"),
+    params:
+        outdir = os.path.join(OUT, "te", "{dataset}"),
+        comparisons = lambda wc: config["comparisons"][wc.dataset],
+        counts_dir = os.path.join(OUT, "psites"),
+    threads: 8
+    resources:
+        mem_mb=24000,
+        runtime=240,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(OUT, "logs", "te.{dataset}.log"),
+    shell:
+        PY + """ te_frac_sanity.py --samples {config[samples_file]} --dataset {wildcards.dataset} \
+        --counts-dir {params.counts_dir} --comparisons {params.comparisons} --outdir {params.outdir} \
+        --threads {threads} &> {log}"""

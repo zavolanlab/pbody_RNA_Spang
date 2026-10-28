@@ -5,6 +5,8 @@ Gene universe: nuclear protein-coding genes of the annotation (rRNA, tRNA, snoRN
 mitochondrially encoded genes are excluded, so that fractions and the global P-body fraction F refer
 to cytoplasmic mRNA). Gene lengths: featureCounts 'Length' (summed exon length, the region in which
 reads were counted), used for TPM-like length correction.
+With --gene-universe all, all expressed genes are kept (as in the pySanity analysis of
+pbody_RNA_Spang.current.ipynb).
 """
 
 import argparse
@@ -22,6 +24,7 @@ def main():
     p.add_argument("--featurecounts-dir", required=True)
     p.add_argument("--gtf", required=True)
     p.add_argument("--outdir", required=True)
+    p.add_argument("--gene-universe", choices=["protein_coding", "all"], default="protein_coding")
     a = p.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
 
@@ -54,7 +57,10 @@ def main():
                          attrs.get("gene_biotype"), f[0], int(f[3]), int(f[4]), f[6]))
     genes = pd.DataFrame(rows, columns=["gene_id", "gene_name", "gene_biotype", "chrom", "start", "end",
                                         "strand"]).drop_duplicates("gene_id").set_index("gene_id")
-    universe = genes.index[(genes["gene_biotype"] == "protein_coding") & (genes["chrom"] != "Mito")]
+    if a.gene_universe == "all":
+        universe = genes.index
+    else:
+        universe = genes.index[(genes["gene_biotype"] == "protein_coding") & (genes["chrom"] != "Mito")]
     universe = universe.intersection(counts.index)
     # counted fractional (featureCounts --fraction): round to integers for the Poisson model
     sel = counts.loc[universe].round().astype(int)

@@ -1,0 +1,10 @@
+---
+# TIN of the Total RNA-seq samples (WF/Snakefile-TIN)
+bam_dir: "/scicore/home/zavolan/GROUP/pbody_RNA_spang_zavolan_v2/wf_runs/v2/output/map_genome_merged_UMIdedup"
+bam_suffix: ".sorted.bam"
+sample_regex: "(?i)-total"          # Total samples of both batches ("-Total-R-DNA-" and "-total-")
+gtf_file: "/scicore/home/zavolan/GROUP/Genomes/saccharomyces_cerevisiae/S288C_reference_genome_R64-1-1/Saccharomyces_cerevisiae.R64-1-1.109.gtf"
+output_dir: "/scicore/home/zavolan/GROUP/pbody_RNA_spang_zavolan_v2/wf_runs/v2/output/TIN"
+min_coverage: 10                     # calculate-tin.py -c: distinct read starts per transcript, else TIN = 0
+sample_size: 100                     # calculate-tin.py -n: equally spaced positions per transcript
+...

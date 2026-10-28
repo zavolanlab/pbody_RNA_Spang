@@ -1,0 +1,17 @@
+---
+# TIN score calculation (zavolanlab/tin-score-calculation, fork of RSeQC tin.py), pinned to v0.6.3
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - rseqc>=5.0
+  - bx-python
+  - pysam
+  - pandas
+  - matplotlib
+  - psutil
+  - pip
+  - pip:
+    - git+https://github.com/zavolanlab/tin-score-calculation.git@527ee69
+...

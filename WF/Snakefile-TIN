@@ -1,0 +1,67 @@
+import os
+import re
+
+# Transcript integrity number (TIN; Wang et al. 2016) of the Total RNA-seq samples, as a proxy of the RNA
+# integrity (RIN) of the input RNA: zavolanlab/tin-score-calculation (calculate-tin.py, fork of RSeQC tin.py)
+# on the UMI-deduplicated genome alignments, one BAM per job (the script scores only the first of several BAMs).
+#
+#   snakemake --snakefile Snakefile-TIN --configfile config.TIN.yaml --profile profile --use-conda \
+#       --conda-prefix <wf_runs>/conda_envs
+
+localrules: finish, bed12, merge
+
+SCRIPTS = os.path.join(workflow.basedir, "scripts", "tin")
+OUT = config["output_dir"]
+
+SAMPLES = sorted(f[:-len(config["bam_suffix"])] for f in os.listdir(config["bam_dir"])
+                 if f.endswith(config["bam_suffix"]) and re.search(config["sample_regex"], f))
+
+
+rule finish:
+    input:
+        merged = os.path.join(OUT, "TIN.merged.tsv"),
+        summary = os.path.join(OUT, "TIN.summary.tsv"),
+
+
+rule bed12:
+    output:
+        bed = os.path.join(OUT, "annotation", "transcripts.bed"),
+        genes = os.path.join(OUT, "annotation", "genes.tsv"),
+    shell:
+        "python3 {SCRIPTS}/gtf_to_bed12.py --gtf {config[gtf_file]} --bed {output.bed} --genes {output.genes}"
+
+
+rule tin:
+    input:
+        bam = os.path.join(config["bam_dir"], "{sample}" + config["bam_suffix"]),
+        bed = rules.bed12.output.bed,
+    output:
+        tsv = os.path.join(OUT, "per_sample", "{sample}.TIN.tsv"),
+    params:
+        min_cov = config.get("min_coverage", 10),
+        n_pos = config.get("sample_size", 100),
+    threads: 8
+    resources:
+        mem_mb=16000,
+        runtime=300,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(OUT, "logs", "tin.{sample}.log"),
+    conda:
+        "envs/tin_score.yaml"
+    shell:
+        "calculate-tin.py -i {input.bam} -r {input.bed} --names {wildcards.sample} -c {params.min_cov} "
+        "-n {params.n_pos} -p {threads} > {output.tsv}.part 2> {log} && mv {output.tsv}.part {output.tsv}"
+
+
+rule merge:
+    input:
+        tsv = expand(os.path.join(OUT, "per_sample", "{sample}.TIN.tsv"), sample=SAMPLES),
+    output:
+        merged = os.path.join(OUT, "TIN.merged.tsv"),
+        summary = os.path.join(OUT, "TIN.summary.tsv"),
+    conda:
+        "envs/tin_score.yaml"
+    shell:
+        "merge-tin.py --input-files {input.tsv} --output-file {output.merged} && "
+        "summarize-tin.py --input-file {output.merged} --output-file {output.summary}"

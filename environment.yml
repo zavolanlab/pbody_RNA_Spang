@@ -1,0 +1,52 @@
+# Conda environment for the analysis notebooks and the Sanity_utils workflow (WF/Snakefile-fracSanity):
+#   PYTHONNOUSERSITE=1 conda env create -f environment.yml
+#   conda activate pbody_rna_spang
+#   sanity-utils-install-sanity --arch-flag=-march=x86-64-v2     # builds the C++ Sanity binary into this env
+#   python -m ipykernel install --user --name pbody_rna_spang --display-name "Python (pbody_rna_spang)" --env PYTHONNOUSERSITE 1
+# Sanity_utils is a private repository: pip needs an SSH key with access to github.com/nimwegenLab.
+# Snakemake itself runs from a separate env (see README).
+name: pbody_rna_spang
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+variables:
+  # ignore packages in ~/.local (user site-packages), which would otherwise shadow the env's own
+  PYTHONNOUSERSITE: "1"
+dependencies:
+  - python >=3.11,<3.13
+  # Sanity_utils dependencies (see its pyproject.toml)
+  - numpy >=1.24
+  - pandas >=2.0
+  - scipy >=1.16
+  - statsmodels >=0.13
+  - threadpoolctl >=3.0
+  - matplotlib-base >=3.6
+  # analysis notebooks
+  - seaborn
+  - scikit-learn
+  - adjusttext
+  - matplotlib-venn
+  - python-dotenv
+  - ruamel.yaml
+  - pyyaml
+  - ipykernel
+  - nbformat
+  - nbconvert
+  - nbstripout
+  # workflow scripts: sequence features (Bio.SeqIO) and RNA folding (RNAfold command line)
+  - biopython
+  - viennarna
+  # build tools for the C++ Sanity binary (sanity-utils-install-sanity)
+  - cxx-compiler
+  - make
+  - zlib
+  - git
+  # compiled dependencies of zavolab_pyutils
+  - pysam
+  - htseq
+  - pybigwig
+  - pip
+  - pip:
+    - "sanity_utils[notebook] @ git+ssh://git@github.com/nimwegenLab/Sanity_utils.git"
+    - "zavolab_pyutils @ git+https://github.com/zavolanlab/zavolab_pyutils.git@separated_functionalities"

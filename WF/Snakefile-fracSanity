@@ -10,7 +10,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "sanity_utils_pipeline"))
 from common import comparisons, safe_name, sample_metadata
 
-localrules: finish, fetch_genesets
+localrules: finish, fetch_genesets, motifs_all
 
 SCRIPTS = os.path.join(workflow.basedir, "scripts", "sanity_utils_pipeline")
 PY = "export PYTHONNOUSERSITE=1 OMP_NUM_THREADS={threads} OPENBLAS_NUM_THREADS={threads} MKL_NUM_THREADS={threads}; " \
@@ -94,6 +94,7 @@ rule prepare_inputs:
     params:
         fc_dir = config["featurecounts_dir"],
         outdir = os.path.join(OUT, "inputs"),
+        universe = config.get("gene_universe", "protein_coding"),
     threads: 1
     resources:
         mem_mb=8000,
@@ -103,7 +104,7 @@ rule prepare_inputs:
         os.path.join(config["local_log"], "prepare_inputs.log"),
     shell:
         PY + """ prepare_inputs.py --start-samples {input.samples} --featurecounts-dir {params.fc_dir} \
-        --gtf {input.gtf} --outdir {params.outdir} &> {log}"""
+        --gtf {input.gtf} --outdir {params.outdir} --gene-universe {params.universe} &> {log}"""
 
 
 rule sanity_fraction:
@@ -120,6 +121,7 @@ rule sanity_fraction:
         inputs = os.path.join(OUT, "inputs"),
         outdir = os.path.join(OUT, "sanity", "{fraction}"),
         averaging = config.get("averaging_method", "reml"),
+        length = "" if config.get("length_correction", True) else "--no-length-correction",
     threads: 8
     resources:
         mem_mb=24000,
@@ -129,7 +131,7 @@ rule sanity_fraction:
         os.path.join(config["local_log"], "sanity_fraction__{fraction}.log"),
     shell:
         PY + """ run_sanity.py --inputs {params.inputs} --fraction {wildcards.fraction} \
-        --outdir {params.outdir} --threads {threads} --averaging-method {params.averaging} &> {log}"""
+        --outdir {params.outdir} --threads {threads} --averaging-method {params.averaging} {params.length} &> {log}"""
 
 
 rule fit_cohort:
@@ -233,3 +235,108 @@ rule set_activities:
     shell:
         PY + """ set_activities.py --total {input.total} --pd {input.pd} --genesets {params.genesets} \
         --genes {input.genes} --outdir {params.outdir} --averaging-method {params.averaging} &> {log}"""
+
+
+rule structure_features:
+    """
+        per-gene DMS-seq structure metrics (Rouskin et al. 2014, lifted to R64 by structure_features.py lift)
+        per region, and a wide per-gene table with the within-gene differences between conditions
+    """
+    input:
+        utr_gtf = config["gtf_CDS_and_UTRs"],
+        genome = config["genome_file"],
+    output:
+        long = os.path.join(TABLES, "structure", "structure_features.R64.tsv"),
+        diff = os.path.join(TABLES, "structure", "structure_features.R64.gini_diff.tsv"),
+        wide = os.path.join(TABLES, "structure", "structure_features.wide.tsv"),
+    params:
+        dms = config.get("dms_dir", ""),
+        caps = ("" if config.get("structure_max_5utr_nt") is None else f"--max-5utr-nt {config['structure_max_5utr_nt']} ")
+               + ("" if config.get("structure_max_3utr_nt") is None else f"--max-3utr-nt {config['structure_max_3utr_nt']}"),
+    threads: 1
+    resources:
+        mem_mb=32000,
+        runtime=180,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "structure_features.log"),
+    shell:
+        PY + """ structure_features.py features \
+        --track in_vivo:{params.dms}/in_vivo.plus.R64.bedGraph.gz:{params.dms}/in_vivo.minus.R64.bedGraph.gz \
+        --track in_vitro:{params.dms}/in_vitro.plus.R64.bedGraph.gz:{params.dms}/in_vitro.minus.R64.bedGraph.gz \
+        --track denatured:{params.dms}/denatured.plus.R64.bedGraph.gz:{params.dms}/denatured.minus.R64.bedGraph.gz \
+        --track atp_depleted:{params.dms}/atp_depleted.plus.R64.bedGraph.gz:{params.dms}/atp_depleted.minus.R64.bedGraph.gz \
+        --gtf {input.utr_gtf} --genome {input.genome} {params.caps} --out {output.long} --diff-out {output.diff} &> {log}; \
+        """ + config["sanity_utils_python"] + """ structure_table.py --features {output.long} --diff {output.diff} \
+        --out {output.wide} >> {log} 2>&1"""
+
+
+rule motif_matrices:
+    """
+        genes x motifs count matrices per region (k-mers, consensus RBP motifs, yeast PWMs with FIMO)
+    """
+    input:
+        features = rules.gene_features.output.tsv,
+    output:
+        known = expand(os.path.join(TABLES, "motifs", "matrices", "known.{region}.tsv"), region=["5UTR", "CDS", "3UTR"]),
+        kmer = expand(os.path.join(TABLES, "motifs", "matrices", "kmer{k}.{region}.tsv.gz"),
+                      k=config.get("kmer_k", [6]), region=["5UTR", "CDS", "3UTR"]),
+        lengths = os.path.join(TABLES, "motifs", "matrices", "region_lengths.tsv"),
+    params:
+        fasta_dir = os.path.join(TABLES, "gene_features", "sequences"),
+        outdir = os.path.join(TABLES, "motifs", "matrices"),
+        meme = " ".join(f"--meme {m}" for m in config.get("motif_meme", [])),
+        k = " ".join(f"--k {k}" for k in config.get("kmer_k", [6])),
+        fimo = config.get("fimo_bin", "fimo"),
+    threads: 1
+    resources:
+        mem_mb=16000,
+        runtime=120,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "motif_matrices.log"),
+    shell:
+        PY + """ motif_matrices.py --fasta-dir {params.fasta_dir} {params.meme} {params.k} --fimo-bin {params.fimo} \
+        --outdir {params.outdir} &> {log}"""
+
+
+rule motif_activities:
+    """
+        ISMARA-style motif activities of one motif matrix (known / kmer<k>) and region on PD and Total
+    """
+    input:
+        total = os.path.join(OUT, "sanity", "Total", "sanity.pkl"),
+        pd = os.path.join(OUT, "sanity", "PD", "sanity.pkl"),
+        matrix = lambda wc: os.path.join(TABLES, "motifs", "matrices",
+                                         f"{wc.mtype}.{wc.region}.tsv" + (".gz" if wc.mtype.startswith("kmer") else "")),
+        lengths = rules.motif_matrices.output.lengths,
+    output:
+        diff = os.path.join(TABLES, "motifs", "activities", "{mtype}.{region}", "differential_recruitment.tsv"),
+        rec = os.path.join(TABLES, "motifs", "activities", "{mtype}.{region}", "recruitment_per_cohort.tsv"),
+    params:
+        outdir = os.path.join(TABLES, "motifs", "activities", "{mtype}.{region}"),
+        transform = config.get("motif_transform", "count"),
+        averaging = config.get("averaging_method", "reml"),
+    wildcard_constraints:
+        mtype = r"known|kmer\d+",
+        region = "5UTR|CDS|3UTR",
+    threads: 8
+    resources:
+        mem_mb=32000,
+        runtime=240,
+        slurm_extra="'--qos=6hours'",
+    log:
+        os.path.join(config["local_log"], "motif_activities__{mtype}.{region}.log"),
+    shell:
+        PY + """ motif_activities.py --total {input.total} --pd {input.pd} --matrix {input.matrix} \
+        --lengths {input.lengths} --region {wildcards.region} --transform {params.transform} \
+        --averaging-method {params.averaging} --outdir {params.outdir} &> {log}"""
+
+
+rule motifs_all:
+    """
+        all motif activities (known motifs and k-mers, each region)
+    """
+    input:
+        expand(os.path.join(TABLES, "motifs", "activities", "{mtype}.{region}", "differential_recruitment.tsv"),
+               mtype=["known"] + [f"kmer{k}" for k in config.get("kmer_k", [6])], region=["5UTR", "CDS", "3UTR"]),
